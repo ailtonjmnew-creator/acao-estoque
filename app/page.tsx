@@ -153,17 +153,33 @@ export default function Home() {
 
   return (
     <main className="min-h-screen bg-slate-900 text-white p-4 md:p-8 font-sans">
-      {/* Cabeçalho Profissional */}
+      {/* Cabeçalho Institucional com Logotipo da Ação Uniformes */}
       <header className="flex flex-col md:flex-row justify-between items-start md:items-center bg-slate-800 p-5 rounded-2xl border border-slate-700 mb-6 shadow-xl gap-4">
         <div>
-          <div className="flex items-center gap-3">
-            <h1 className="text-2xl md:text-3xl font-black tracking-wider text-amber-400">AÇÃO ESTOQUE</h1>
+          <div className="flex items-center gap-3 flex-wrap">
+            {/* LOGOTIPO OFICIAL */}
+            <img 
+              src="/logo.png" 
+              alt="Ação Uniformes Profissionais" 
+              className="h-10 md:h-12 w-auto object-contain"
+              onError={(e) => {
+                // Se a imagem ainda não estiver na pasta public, exibe a marca em texto formatado
+                e.currentTarget.style.display = 'none';
+                const fallback = document.getElementById('fallback-title');
+                if (fallback) fallback.style.display = 'block';
+              }}
+            />
+
+            <h1 id="fallback-title" className="text-2xl md:text-3xl font-black tracking-wider text-amber-400 hidden">
+              AÇÃO UNIFORMES PROFISSIONAIS
+            </h1>
+
             <span className="bg-amber-500/20 text-amber-300 text-xs font-bold px-2.5 py-1 rounded-full border border-amber-500/30">
-              Demonstração ao Cliente
+              Ação Estoque • Demonstração
             </span>
           </div>
-          <p className="text-xs text-slate-400 mt-1">
-            Sistema de Gestão e Controle de Entregas de Uniformes Profissionais
+          <p className="text-xs text-slate-400 mt-1.5">
+            Sistema Módulo Almoxarifado • Gestão e Controle de Entregas
           </p>
         </div>
         <div className="flex items-center gap-2 bg-slate-900/80 px-3 py-2 rounded-xl border border-slate-700 text-xs">
