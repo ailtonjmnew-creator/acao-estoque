@@ -22,22 +22,30 @@ export default function Home() {
   const [busca, setBusca] = useState("");
   const [funcionarios, setFuncionarios] = useState<Funcionario[]>([]);
   const [funcionarioSelecionado, setFuncionarioSelecionado] = useState<Funcionario | null>(null);
+  const [isAvulso, setIsAvulso] = useState(false);
+  const [nomeAvulso, setNomeAvulso] = useState("");
   const [carregando, setCarregando] = useState(false);
-  const [modalCadastroAberto, setModalCadastroAberto] = useState(false);
 
-  // Estados do Cadastro Expresso
+  // Modais
+  const [modalCadastroAberto, setModalCadastroAberto] = useState(false);
+  const [modalAssinaturaAberto, setModalAssinaturaAberto] = useState(false);
+
+  // Cadastro Expresso
   const [novoNome, setNovoNome] = useState("");
   const [novaMatricula, setNovaMatricula] = useState("");
   const [novoCracha, setNovoCracha] = useState("");
-  const [novaUnidade, setNovaUnidade] = useState("Atacadão Costa - Goiânia");
-  const [novoSetor, setNovoSetor] = useState("Caixa");
+  const [novaUnidade, setNovaUnidade] = useState("Unidade Principal");
+  const [novoSetor, setNovoSetor] = useState("Operacional");
 
-  // Estados da Entrega e Assinatura Digital
-  const [itemSelecionado, setItemSelecionado] = useState("Camisa Polo Atacadão Costa - Tam G");
+  // Atributos de Peças (Flexíveis)
+  const [produto, setProduto] = useState("Camisa Polo");
+  const [tecido, setTecido] = useState("Malha Piquet Premium");
+  const [cor, setCor] = useState("Azul Marinho");
+  const [tamanho, setTamanho] = useState("G");
   const [quantidade, setQuantidade] = useState(1);
-  const [modalAssinaturaAberto, setModalAssinaturaAberto] = useState(false);
-  const [isDrawing, setIsDrawing] = useState(false);
 
+  // Assinatura Canvas
+  const [isDrawing, setIsDrawing] = useState(false);
   const inputBuscaRef = useRef<HTMLInputElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
@@ -45,87 +53,65 @@ export default function Home() {
     if (inputBuscaRef.current && !modalCadastroAberto && !modalAssinaturaAberto) {
       inputBuscaRef.current.focus();
     }
-  }, [modalCadastroAberto, modalAssinaturaAberto, funcionarioSelecionado]);
+  }, [modalCadastroAberto, modalAssinaturaAberto]);
 
-  // Consultar Colaborador no Supabase
+  // Consultar Colaborador
   const buscarFuncionarios = async (termo: string) => {
     setBusca(termo);
+    setIsAvulso(false);
     if (!termo.trim()) {
       setFuncionarios([]);
       return;
     }
 
     setCarregando(true);
-
     if (supabase) {
       const { data, error } = await supabase
         .from("funcionarios")
         .select("*")
         .or(`nome.ilike.%${termo}%,matricula.ilike.%${termo}%,codigo_cracha.ilike.%${termo}%`)
-        .limit(10);
+        .limit(5);
 
-      if (error) {
-        console.error("Erro na busca:", error.message);
-      } else if (data) {
-        setFuncionarios(data);
-        const exato = data.find(f => f.codigo_cracha === termo || f.matricula === termo);
-        if (exato) setFuncionarioSelecionado(exato);
-      }
+      if (!error && data) setFuncionarios(data);
     }
     setCarregando(false);
   };
 
-  // Gravar Colaborador no Supabase
+  // Salvar Novo Colaborador Expresso
   const salvarNovoFuncionario = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!novoNome || !novaMatricula) {
-      alert("Preencha Nome e Matrícula.");
-      return;
-    }
-
     const novoColaborador: Funcionario = {
       nome: novoNome,
       matricula: novaMatricula,
       codigo_cracha: novoCracha || novaMatricula,
       unidade: novaUnidade,
-      setor: novoSetor || "Geral",
+      setor: novoSetor,
     };
 
     if (supabase) {
-      const { data, error } = await supabase.from("funcionarios").insert([novoColaborador]).select();
-      
-      if (error) {
-        alert("Erro ao gravar no Supabase: " + error.message);
-        return;
-      }
-
-      if (data && data[0]) {
-        setFuncionarioSelecionado(data[0]);
-        alert(`Colaborador ${data[0].nome} cadastrado e selecionado com sucesso!`);
-      }
+      const { data } = await supabase.from("funcionarios").insert([novoColaborador]).select();
+      if (data && data[0]) setFuncionarioSelecionado(data[0]);
     } else {
-      alert("Aviso: Supabase não conectado. Dados salvos apenas na sessão atual.");
       setFuncionarioSelecionado(novoColaborador);
     }
 
+    setIsAvulso(false);
     setNovoNome("");
     setNovaMatricula("");
     setNovoCracha("");
     setModalCadastroAberto(false);
   };
 
-  // Funções do Coletor de Assinatura Digital Canvas
+  // Funções da Assinatura Touch / Mouse
   const startDrawing = (e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) => {
     setIsDrawing(true);
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
-
     const rect = canvas.getBoundingClientRect();
     const clientX = 'touches' in e ? e.touches[0].clientX : e.clientX;
     const clientY = 'touches' in e ? e.touches[0].clientY : e.clientY;
-
     ctx.beginPath();
     ctx.moveTo(clientX - rect.left, clientY - rect.top);
   };
@@ -136,11 +122,9 @@ export default function Home() {
     if (!canvas) return;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
-
     const rect = canvas.getBoundingClientRect();
     const clientX = 'touches' in e ? e.touches[0].clientX : e.clientX;
     const clientY = 'touches' in e ? e.touches[0].clientY : e.clientY;
-
     ctx.lineTo(clientX - rect.left, clientY - rect.top);
     ctx.strokeStyle = "#10b981";
     ctx.lineWidth = 3;
@@ -148,9 +132,7 @@ export default function Home() {
     ctx.stroke();
   };
 
-  const stopDrawing = () => {
-    setIsDrawing(false);
-  };
+  const stopDrawing = () => setIsDrawing(false);
 
   const limparAssinatura = () => {
     const canvas = canvasRef.current;
@@ -159,164 +141,271 @@ export default function Home() {
     if (ctx) ctx.clearRect(0, 0, canvas.width, canvas.height);
   };
 
-  const finalizarEntregaComAssinatura = () => {
-    alert(`Entrega efetuada com SUCESSO!\n\nColaborador: ${funcionarioSelecionado?.nome}\nItem: ${itemSelecionado}\nQtd: ${quantidade}\nAssinatura coletada.`);
+  const finalizarEntrega = () => {
+    const nomeFinal = isAvulso ? nomeAvulso : funcionarioSelecionado?.nome;
+    alert(`✅ ENTREGA REGISTRADA COM SUCESSO!\n\nRecebedor: ${nomeFinal} ${isAvulso ? "(Avulso)" : ""}\nItem: ${produto} - ${tecido} (${cor} / Tam: ${tamanho})\nQtd: ${quantidade} un.\n\nAssinatura digital capturada e baixa registrada no estoque.`);
     setModalAssinaturaAberto(false);
     setFuncionarioSelecionado(null);
+    setIsAvulso(false);
+    setNomeAvulso("");
     setBusca("");
   };
 
   return (
     <main className="min-h-screen bg-slate-900 text-white p-4 md:p-8 font-sans">
-      {/* Cabeçalho */}
-      <header className="flex justify-between items-center bg-slate-800 p-4 rounded-xl border border-slate-700 mb-6">
+      {/* Cabeçalho Profissional */}
+      <header className="flex flex-col md:flex-row justify-between items-start md:items-center bg-slate-800 p-5 rounded-2xl border border-slate-700 mb-6 shadow-xl gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-amber-400">AÇÃO ESTOQUE</h1>
-          <p className="text-sm text-slate-400">Terminal Operacional de Entregas | Atacadão Costa</p>
+          <div className="flex items-center gap-3">
+            <h1 className="text-2xl md:text-3xl font-black tracking-wider text-amber-400">AÇÃO ESTOQUE</h1>
+            <span className="bg-amber-500/20 text-amber-300 text-xs font-bold px-2.5 py-1 rounded-full border border-amber-500/30">
+              Demonstração ao Cliente
+            </span>
+          </div>
+          <p className="text-xs text-slate-400 mt-1">
+            Sistema de Gestão e Controle de Entregas de Uniformes Profissionais
+          </p>
         </div>
-        <div className="text-right text-xs text-slate-400">
-          <span className="inline-block w-2 h-2 rounded-full bg-emerald-500 mr-2"></span>
-          Sistema Ativo
+        <div className="flex items-center gap-2 bg-slate-900/80 px-3 py-2 rounded-xl border border-slate-700 text-xs">
+          <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></span>
+          <span className="text-slate-300 font-medium">Terminal Ativo & Sincronizado</span>
         </div>
       </header>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        {/* Bloco 1: Identificação por Crachá ou Nome */}
-        <section className="bg-slate-800 p-6 rounded-xl border border-slate-700">
-          <div className="flex justify-between items-center mb-4">
-            <h2 className="text-lg font-semibold text-slate-200">1. Identificar Colaborador</h2>
-            <button
-              onClick={() => {
-                setNovoCracha(busca);
-                setModalCadastroAberto(true);
-              }}
-              className="text-xs bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold px-3 py-1.5 rounded-lg transition"
-            >
-              + Cadastro Expresso
-            </button>
-          </div>
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+        
+        {/* LADO ESQUERDO: Identificação do Colaborador / Avulso */}
+        <section className="lg:col-span-6 bg-slate-800 p-6 rounded-2xl border border-slate-700 shadow-xl flex flex-col justify-between">
+          <div>
+            <div className="flex justify-between items-center mb-4">
+              <h2 className="text-lg font-bold text-slate-100 flex items-center gap-2">
+                <span className="w-6 h-6 rounded-full bg-amber-500 text-slate-950 font-black text-xs flex items-center justify-center">1</span>
+                Identificar Recebedor
+              </h2>
+              
+              <button
+                onClick={() => setModalCadastroAberto(true)}
+                className="text-xs bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold px-3 py-2 rounded-lg transition shadow-md"
+              >
+                + Cadastrar Novo
+              </button>
+            </div>
 
-          <div className="mb-4">
-            <label className="block text-xs text-slate-400 mb-1">
-              Escanear Crachá / Digitar Nome ou Matrícula
-            </label>
-            <input
-              ref={inputBuscaRef}
-              type="text"
-              value={busca}
-              onChange={(e) => buscarFuncionarios(e.target.value)}
-              placeholder="Passe o crachá no leitor aqui..."
-              className="w-full p-3 bg-slate-950 border border-slate-700 rounded-lg text-white text-lg focus:outline-none focus:border-amber-400"
-            />
-          </div>
+            {/* Alternador de Modo: Cadastrado vs Avulso */}
+            <div className="grid grid-cols-2 gap-2 p-1 bg-slate-950 rounded-xl mb-4 border border-slate-800">
+              <button
+                onClick={() => { setIsAvulso(false); setFuncionarioSelecionado(null); }}
+                className={`py-2 text-xs font-bold rounded-lg transition ${!isAvulso ? "bg-slate-800 text-amber-400 shadow" : "text-slate-400 hover:text-white"}`}
+              >
+                Colaborador Cadastrado
+              </button>
+              <button
+                onClick={() => { setIsAvulso(true); setFuncionarioSelecionado(null); setBusca(""); }}
+                className={`py-2 text-xs font-bold rounded-lg transition ${isAvulso ? "bg-amber-500 text-slate-950 shadow" : "text-slate-400 hover:text-white"}`}
+              >
+                Entrega Avulsa (Sem Cadastro)
+              </button>
+            </div>
 
-          {/* Resultado da Busca */}
-          <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
-            {carregando && <p className="text-sm text-slate-400 text-center py-2">Consultando banco de dados...</p>}
-            
-            {!carregando && busca && funcionarios.length === 0 && (
-              <div className="p-4 bg-slate-900 border border-slate-700 rounded-lg text-center">
-                <p className="text-sm text-slate-400 mb-2">Nenhum cadastro encontrado para &quot;{busca}&quot;.</p>
-                <button
-                  onClick={() => {
-                    setNovoCracha(busca);
-                    setModalCadastroAberto(true);
-                  }}
-                  className="text-sm bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold px-4 py-2 rounded-lg transition"
-                >
-                  Cadastrar &quot;{busca}&quot; Agora
-                </button>
+            {!isAvulso ? (
+              <>
+                <div className="mb-4">
+                  <label className="block text-xs font-medium text-slate-400 mb-1.5">
+                    Buscar por Nome, Matrícula ou Bipar Crachá
+                  </label>
+                  <input
+                    ref={inputBuscaRef}
+                    type="text"
+                    value={busca}
+                    onChange={(e) => buscarFuncionarios(e.target.value)}
+                    placeholder="Digite ou bipe o crachá..."
+                    className="w-full p-3.5 bg-slate-950 border border-slate-700 rounded-xl text-white font-medium text-base focus:outline-none focus:border-amber-400 transition"
+                  />
+                </div>
+
+                {/* Lista de Resultados de Busca */}
+                <div className="space-y-2 max-h-52 overflow-y-auto pr-1">
+                  {carregando && <p className="text-xs text-slate-400 text-center py-3">Buscando colaborador...</p>}
+                  
+                  {!carregando && busca && funcionarios.length === 0 && (
+                    <div className="p-4 bg-slate-950 rounded-xl border border-slate-800 text-center">
+                      <p className="text-xs text-slate-400 mb-2">Nenhum colaborador encontrado para &quot;{busca}&quot;.</p>
+                      <button
+                        onClick={() => { setNovoCracha(busca); setModalCadastroAberto(true); }}
+                        className="text-xs bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold px-3 py-1.5 rounded-lg"
+                      >
+                        Cadastrar &quot;{busca}&quot; Agora
+                      </button>
+                    </div>
+                  )}
+
+                  {funcionarios.map((func) => (
+                    <div
+                      key={func.id || func.matricula}
+                      onClick={() => setFuncionarioSelecionado(func)}
+                      className={`p-3 rounded-xl border cursor-pointer transition flex justify-between items-center ${
+                        funcionarioSelecionado?.matricula === func.matricula
+                          ? "bg-amber-500/20 border-amber-400 text-amber-300"
+                          : "bg-slate-950 border-slate-800 hover:border-slate-600 text-slate-200"
+                      }`}
+                    >
+                      <div>
+                        <p className="font-bold text-sm">{func.nome}</p>
+                        <p className="text-xs text-slate-400">Matrícula: {func.matricula} | Setor: {func.setor || "Geral"}</p>
+                      </div>
+                      <span className="text-xs px-2.5 py-1 bg-slate-800 rounded-lg text-slate-300">Selecionar</span>
+                    </div>
+                  ))}
+                </div>
+              </>
+            ) : (
+              <div className="p-4 bg-amber-950/20 border border-amber-500/30 rounded-xl">
+                <p className="text-xs font-bold text-amber-400 uppercase tracking-wider mb-2">Identificação do Recebedor Avulso</p>
+                <label className="block text-xs text-slate-300 mb-1">Nome Completo do Responsável/Retirante *</label>
+                <input
+                  type="text"
+                  value={nomeAvulso}
+                  onChange={(e) => setNomeAvulso(e.target.value)}
+                  placeholder="Ex: Carlos Silva (Prestador / Novo Contratado)"
+                  className="w-full p-3 bg-slate-950 border border-slate-700 rounded-xl text-white text-sm focus:outline-none focus:border-amber-400"
+                />
+                <p className="text-[11px] text-slate-400 mt-2">
+                  * Esta modalidade permite entregar o uniforme imediatamente, exigindo a assinatura do recebedor na etapa seguinte.
+                </p>
               </div>
             )}
-
-            {funcionarios.map((func) => (
-              <div
-                key={func.id || func.matricula}
-                onClick={() => setFuncionarioSelecionado(func)}
-                className={`p-3 rounded-lg border cursor-pointer transition flex justify-between items-center ${
-                  funcionarioSelecionado?.matricula === func.matricula
-                    ? "bg-amber-500/20 border-amber-400 text-amber-300"
-                    : "bg-slate-900 border-slate-700 hover:border-slate-500 text-slate-200"
-                }`}
-              >
-                <div>
-                  <p className="font-semibold text-base">{func.nome}</p>
-                  <p className="text-xs text-slate-400">
-                    Matrícula: {func.matricula} | Setor: {func.setor || "Geral"}
-                  </p>
-                </div>
-                <span className="text-xs px-2 py-1 bg-slate-800 rounded border border-slate-600">
-                  Selecionar
-                </span>
-              </div>
-            ))}
           </div>
 
-          {/* Confirmação do Selecionado */}
-          {funcionarioSelecionado && (
-            <div className="mt-4 p-4 bg-emerald-950/40 border border-emerald-500/40 rounded-xl">
-              <p className="text-xs text-emerald-400 font-semibold uppercase tracking-wider">Colaborador Confirmado</p>
-              <p className="text-lg font-bold text-emerald-200">{funcionarioSelecionado.nome}</p>
-              <p className="text-xs text-emerald-300/70">
-                Matrícula: {funcionarioSelecionado.matricula} | Unidade: {funcionarioSelecionado.unidade || "Atacadão Costa"}
-              </p>
+          {/* Card de Confirmação do Selecionado */}
+          {(funcionarioSelecionado || (isAvulso && nomeAvulso.trim())) && (
+            <div className="mt-4 p-4 bg-emerald-950/40 border border-emerald-500/40 rounded-xl flex justify-between items-center">
+              <div>
+                <p className="text-[10px] text-emerald-400 font-bold uppercase tracking-wider">Pronto para Liberação</p>
+                <p className="text-base font-bold text-emerald-200">
+                  {isAvulso ? nomeAvulso : funcionarioSelecionado?.nome}
+                </p>
+                <p className="text-xs text-emerald-300/70">
+                  {isAvulso ? "Retirada Avulsa Confirmada" : `Matrícula: ${funcionarioSelecionado?.matricula}`}
+                </p>
+              </div>
+              <span className="w-3 h-3 rounded-full bg-emerald-400 animate-ping"></span>
             </div>
           )}
         </section>
 
-        {/* Bloco 2: Liberação de Uniformes */}
-        <section className="bg-slate-800 p-6 rounded-xl border border-slate-700">
-          <h2 className="text-lg font-semibold text-slate-200 mb-4">2. Registrar Entrega de Uniforme</h2>
-          
-          {!funcionarioSelecionado ? (
-            <div className="h-48 flex items-center justify-center text-slate-500 text-sm border border-dashed border-slate-700 rounded-lg text-center p-4">
-              Aguardando leitura do crachá ou seleção do colaborador ao lado.
-            </div>
-          ) : (
-            <div className="space-y-4">
-              <div>
-                <label className="block text-xs text-slate-400 mb-1">Item do Estoque</label>
-                <select
-                  value={itemSelecionado}
-                  onChange={(e) => setItemSelecionado(e.target.value)}
-                  className="w-full p-3 bg-slate-950 border border-slate-700 rounded-lg text-white"
-                >
-                  <option>Camisa Polo Atacadão Costa - Tam G</option>
-                  <option>Camisa Polo Atacadão Costa - Tam M</option>
-                  <option>Camisa Polo Atacadão Costa - Tam GG</option>
-                  <option>Calça Operacional Brim - Tam 42</option>
-                  <option>Avental de Proteção - Tam Único</option>
-                </select>
+        {/* LADO DIREITO: Seleção de Uniformes e Tecidos */}
+        <section className="lg:col-span-6 bg-slate-800 p-6 rounded-2xl border border-slate-700 shadow-xl flex flex-col justify-between">
+          <div>
+            <h2 className="text-lg font-bold text-slate-100 mb-4 flex items-center gap-2">
+              <span className="w-6 h-6 rounded-full bg-amber-500 text-slate-950 font-black text-xs flex items-center justify-center">2</span>
+              Selecionar Peça & Lançamento
+            </h2>
+
+            <div className="space-y-3">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs text-slate-400 mb-1">Modelo de Uniforme</label>
+                  <select
+                    value={produto}
+                    onChange={(e) => setProduto(e.target.value)}
+                    className="w-full p-2.5 bg-slate-950 border border-slate-700 rounded-xl text-white text-sm"
+                  >
+                    <option>Camisa Polo</option>
+                    <option>Camiseta Gola O</option>
+                    <option>Camisa Social Executive</option>
+                    <option>Calça Operacional Brim</option>
+                    <option>Jaleco Brim Heavy</option>
+                    <option>Avental de Proteção</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs text-slate-400 mb-1">Tecido / Malha</label>
+                  <select
+                    value={tecido}
+                    onChange={(e) => setTecido(e.target.value)}
+                    className="w-full p-2.5 bg-slate-950 border border-slate-700 rounded-xl text-white text-sm"
+                  >
+                    <option>Malha Piquet Premium</option>
+                    <option>Brim Profissional Heavy</option>
+                    <option>Tricoline Mista</option>
+                    <option>Helanca Escolar/Ind.</option>
+                    <option>Terbrim Cedro</option>
+                  </select>
+                </div>
               </div>
 
-              <div>
-                <label className="block text-xs text-slate-400 mb-1">Quantidade Entregue</label>
-                <input
-                  type="number"
-                  value={quantidade}
-                  onChange={(e) => setQuantidade(Number(e.target.value))}
-                  min={1}
-                  className="w-full p-3 bg-slate-950 border border-slate-700 rounded-lg text-white"
-                />
+              <div className="grid grid-cols-3 gap-3">
+                <div>
+                  <label className="block text-xs text-slate-400 mb-1">Cor</label>
+                  <select
+                    value={cor}
+                    onChange={(e) => setCor(e.target.value)}
+                    className="w-full p-2.5 bg-slate-950 border border-slate-700 rounded-xl text-white text-sm"
+                  >
+                    <option>Azul Marinho</option>
+                    <option>Preto Especial</option>
+                    <option>Cinza Grafite</option>
+                    <option>Branco</option>
+                    <option>Verde Bandeira</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs text-slate-400 mb-1">Tamanho</label>
+                  <select
+                    value={tamanho}
+                    onChange={(e) => setTamanho(e.target.value)}
+                    className="w-full p-2.5 bg-slate-950 border border-slate-700 rounded-xl text-white text-sm"
+                  >
+                    <option>P</option>
+                    <option>M</option>
+                    <option>G</option>
+                    <option>GG</option>
+                    <option>EG</option>
+                    <option>Tam. 42</option>
+                    <option>Tam. 44</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs text-slate-400 mb-1">Qtd. Entregue</label>
+                  <input
+                    type="number"
+                    value={quantidade}
+                    onChange={(e) => setQuantidade(Number(e.target.value))}
+                    min={1}
+                    className="w-full p-2.5 bg-slate-950 border border-slate-700 rounded-xl text-white text-sm text-center font-bold"
+                  />
+                </div>
               </div>
 
-              <button
-                onClick={() => setModalAssinaturaAberto(true)}
-                className="w-full py-4 bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-bold text-lg rounded-xl transition shadow-lg shadow-emerald-500/10"
-              >
-                Avançar para Assinatura do Colaborador
-              </button>
+              {/* Informação do Saldo Disponível */}
+              <div className="p-3 bg-slate-950 rounded-xl border border-slate-800 flex justify-between items-center text-xs">
+                <span className="text-slate-400">Saldo Atual em Estoque:</span>
+                <span className="text-emerald-400 font-bold bg-emerald-950/60 px-2.5 py-1 rounded-md border border-emerald-500/30">
+                  28 unidades disponíveis
+                </span>
+              </div>
             </div>
-          )}
+          </div>
+
+          <button
+            disabled={!funcionarioSelecionado && (!isAvulso || !nomeAvulso.trim())}
+            onClick={() => setModalAssinaturaAberto(true)}
+            className="w-full mt-6 py-4 bg-emerald-500 hover:bg-emerald-400 disabled:bg-slate-700 disabled:text-slate-500 text-slate-950 font-black text-lg rounded-xl transition shadow-lg shadow-emerald-500/10"
+          >
+            Avançar para Assinatura do Colaborador ➔
+          </button>
         </section>
       </div>
 
-      {/* Modal 1: Cadastro Expresso */}
+      {/* MODAL 1: CADASTRO EXPRESSO DE COLABORADOR */}
       {modalCadastroAberto && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 z-50">
           <div className="bg-slate-800 border border-slate-700 rounded-2xl max-w-md w-full p-6 shadow-2xl">
             <h3 className="text-xl font-bold text-amber-400 mb-1">Cadastro Expresso de Colaborador</h3>
-            <p className="text-xs text-slate-400 mb-4">Insira os dados para salvar no banco de dados e liberar a entrega.</p>
+            <p className="text-xs text-slate-400 mb-4">Insira os dados para liberar a entrega imediatamente.</p>
 
             <form onSubmit={salvarNovoFuncionario} className="space-y-3">
               <div>
@@ -326,8 +415,8 @@ export default function Home() {
                   required
                   value={novoNome}
                   onChange={(e) => setNovoNome(e.target.value)}
-                  placeholder="Ex: João da Silva"
-                  className="w-full p-2.5 bg-slate-950 border border-slate-700 rounded-lg text-white text-sm"
+                  placeholder="Ex: Roberto Alves"
+                  className="w-full p-2.5 bg-slate-950 border border-slate-700 rounded-xl text-white text-sm"
                 />
               </div>
 
@@ -339,8 +428,8 @@ export default function Home() {
                     required
                     value={novaMatricula}
                     onChange={(e) => setNovaMatricula(e.target.value)}
-                    placeholder="Ex: 12345"
-                    className="w-full p-2.5 bg-slate-950 border border-slate-700 rounded-lg text-white text-sm"
+                    placeholder="Ex: 9988"
+                    className="w-full p-2.5 bg-slate-950 border border-slate-700 rounded-xl text-white text-sm"
                   />
                 </div>
                 <div>
@@ -349,8 +438,8 @@ export default function Home() {
                     type="text"
                     value={novoCracha}
                     onChange={(e) => setNovoCracha(e.target.value)}
-                    placeholder="Ex: 54321"
-                    className="w-full p-2.5 bg-slate-950 border border-slate-700 rounded-lg text-white text-sm"
+                    placeholder="Ex: 112233"
+                    className="w-full p-2.5 bg-slate-950 border border-slate-700 rounded-xl text-white text-sm"
                   />
                 </div>
               </div>
@@ -362,7 +451,7 @@ export default function Home() {
                     type="text"
                     value={novaUnidade}
                     onChange={(e) => setNovaUnidade(e.target.value)}
-                    className="w-full p-2.5 bg-slate-950 border border-slate-700 rounded-lg text-white text-sm"
+                    className="w-full p-2.5 bg-slate-950 border border-slate-700 rounded-xl text-white text-sm"
                   />
                 </div>
                 <div>
@@ -371,7 +460,7 @@ export default function Home() {
                     type="text"
                     value={novoSetor}
                     onChange={(e) => setNovoSetor(e.target.value)}
-                    className="w-full p-2.5 bg-slate-950 border border-slate-700 rounded-lg text-white text-sm"
+                    className="w-full p-2.5 bg-slate-950 border border-slate-700 rounded-xl text-white text-sm"
                   />
                 </div>
               </div>
@@ -380,13 +469,13 @@ export default function Home() {
                 <button
                   type="button"
                   onClick={() => setModalCadastroAberto(false)}
-                  className="px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg text-sm transition"
+                  className="px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded-xl text-sm transition"
                 >
                   Cancelar
                 </button>
                 <button
                   type="submit"
-                  className="px-5 py-2 bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold rounded-lg text-sm transition"
+                  className="px-5 py-2 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold rounded-xl text-sm transition"
                 >
                   Salvar e Selecionar
                 </button>
@@ -396,17 +485,17 @@ export default function Home() {
         </div>
       )}
 
-      {/* Modal 2: Assinatura Digital do Colaborador */}
+      {/* MODAL 2: ASSINATURA DIGITAL NO TOUCH / MOUSE */}
       {modalAssinaturaAberto && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+        <div className="fixed inset-0 bg-black/85 backdrop-blur-md flex items-center justify-center p-4 z-50">
           <div className="bg-slate-800 border border-slate-700 rounded-2xl max-w-lg w-full p-6 shadow-2xl">
             <h3 className="text-xl font-bold text-emerald-400 mb-1">Assinatura Digital de Recebimento</h3>
-            <p className="text-xs text-slate-400 mb-4">
-              Colaborador: <span className="text-white font-semibold">{funcionarioSelecionado?.nome}</span> | Item: <span className="text-white font-semibold">{itemSelecionado} ({quantidade}x)</span>
+            <p className="text-xs text-slate-300 mb-4">
+              Recebedor: <span className="text-amber-400 font-bold">{isAvulso ? nomeAvulso : funcionarioSelecionado?.nome}</span> | Item: <span className="text-white font-semibold">{produto} - {tecido} ({quantidade}x)</span>
             </p>
 
-            <div className="bg-slate-950 border-2 border-dashed border-slate-700 rounded-xl p-2 text-center mb-4 touch-none">
-              <p className="text-xs text-slate-500 mb-2">Assine com o dedo ou caneta na caixa abaixo:</p>
+            <div className="bg-slate-950 border-2 border-dashed border-slate-700 rounded-2xl p-2 text-center mb-4 touch-none">
+              <p className="text-[11px] text-slate-500 mb-2">Assine com o dedo ou caneta touch na caixa abaixo:</p>
               <canvas
                 ref={canvasRef}
                 width={440}
@@ -418,7 +507,7 @@ export default function Home() {
                 onTouchStart={startDrawing}
                 onTouchMove={draw}
                 onTouchEnd={stopDrawing}
-                className="bg-slate-900 rounded-lg w-full cursor-crosshair border border-slate-800"
+                className="bg-slate-900 rounded-xl w-full cursor-crosshair border border-slate-800"
               />
             </div>
 
@@ -426,7 +515,7 @@ export default function Home() {
               <button
                 type="button"
                 onClick={limparAssinatura}
-                className="px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-xs rounded-lg transition"
+                className="px-3 py-2 bg-slate-700 hover:bg-slate-600 text-xs rounded-xl transition"
               >
                 Limpar Assinatura
               </button>
@@ -435,14 +524,14 @@ export default function Home() {
                 <button
                   type="button"
                   onClick={() => setModalAssinaturaAberto(false)}
-                  className="px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg text-sm transition"
+                  className="px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded-xl text-sm transition"
                 >
                   Cancelar
                 </button>
                 <button
                   type="button"
-                  onClick={finalizarEntregaComAssinatura}
-                  className="px-5 py-2 bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-bold rounded-lg text-sm transition"
+                  onClick={finalizarEntrega}
+                  className="px-5 py-2 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black rounded-xl text-sm transition shadow-lg shadow-emerald-500/20"
                 >
                   Confirmar e Dar Baixa
                 </button>
