@@ -19,21 +19,20 @@ export default function PainelAdmin() {
   const [erroSupabase, setErroSupabase] = useState<string | null>(null);
   const [mensagem, setMensagem] = useState({ tipo: '', texto: '' });
 
-  // Formulário Movimentação
+  // Formulário Movimentação & Atribuição de Cliente
   const [movItem, setMovItem] = useState('');
   const [movCliente, setMovCliente] = useState('');
-  const [movTipo, setMovTipo] = useState<'ENTRADA' | 'SAIDA'>('SAIDA');
+  const [movTipo, setMovTipo] = useState<'ENTRADA' | 'SAIDA'>('ENTRADA');
   const [movQtd, setMovQtd] = useState<number | string>(1);
+  const [movEstoqueMinimo, setMovEstoqueMinimo] = useState<number | string>(10);
+  const [movMinimoCritico, setMovMinimoCritico] = useState<number | string>(3);
   const [movObs, setMovObs] = useState('');
 
-  // Formulário Novo Uniforme
+  // Formulário Novo Uniforme (Catálogo Geral)
   const [novoUniforme, setNovoUniforme] = useState({
     descricao: '',
     codigo: '',
-    cliente_id: '',
-    quantidade: 20,
-    estoque_minimo: 10,
-    minimo_critico: 3
+    quantidade: 0
   });
 
   // Formulário Novo Cliente
@@ -56,6 +55,17 @@ export default function PainelAdmin() {
       setMovCliente(clienteFiltro);
     }
   }, [clienteFiltro]);
+
+  useEffect(() => {
+    if (movItem) {
+      const prod = produtos.find((p) => p.id === movItem || p.codigo === movItem);
+      if (prod) {
+        if (prod.cliente_id) setMovCliente(prod.cliente_id);
+        if (prod.estoque_minimo !== undefined) setMovEstoqueMinimo(prod.estoque_minimo);
+        if (prod.minimo_critico !== undefined) setMovMinimoCritico(prod.minimo_critico);
+      }
+    }
+  }, [movItem, produtos]);
 
   async function carregarDados() {
     setErroSupabase(null);
@@ -159,10 +169,10 @@ export default function PainelAdmin() {
       descricao: novoUniforme.descricao,
       nome: novoUniforme.descricao,
       codigo: codigoFinal,
-      cliente_id: novoUniforme.cliente_id || null,
       quantidade: Number(novoUniforme.quantidade) || 0,
-      estoque_minimo: Number(novoUniforme.estoque_minimo) || 10,
-      minimo_critico: Number(novoUniforme.minimo_critico) || 3
+      cliente_id: null,
+      estoque_minimo: 10,
+      minimo_critico: 3
     };
 
     const { error } = await supabase.from('produtos').insert([payload]);
@@ -170,14 +180,11 @@ export default function PainelAdmin() {
     if (error) {
       mostrarAlerta(`Erro ao cadastrar uniforme: ${error.message}`, 'erro');
     } else {
-      mostrarAlerta(`Uniforme "${novoUniforme.descricao}" cadastrado com sucesso!`);
+      mostrarAlerta(`Uniforme "${novoUniforme.descricao}" cadastrado no Catálogo Geral com sucesso!`);
       setNovoUniforme({
         descricao: '',
         codigo: '',
-        cliente_id: '',
-        quantidade: 20,
-        estoque_minimo: 10,
-        minimo_critico: 3
+        quantidade: 0
       });
       await carregarDados();
       setAbaAtiva('movimentacao');
@@ -246,9 +253,11 @@ export default function PainelAdmin() {
       novaQuantidade += qtdMovida;
     }
 
+    const clienteAtribuido = movCliente || prodSelecionado.cliente_id || null;
+
     const payloadHist = {
       produto_id: prodSelecionado.id || movItem,
-      cliente_id: movCliente || prodSelecionado.cliente_id || null,
+      cliente_id: clienteAtribuido,
       tipo_movimento: movTipo,
       quantidade: qtdMovida,
       observacao: movObs,
@@ -262,15 +271,23 @@ export default function PainelAdmin() {
       return;
     }
 
+    const updatePayload: any = {
+      quantidade: novaQuantidade,
+      cliente_id: clienteAtribuido
+    };
+
+    if (movEstoqueMinimo !== '') updatePayload.estoque_minimo = Number(movEstoqueMinimo);
+    if (movMinimoCritico !== '') updatePayload.minimo_critico = Number(movMinimoCritico);
+
     const { error: errProd } = await supabase
       .from('produtos')
-      .update({ quantidade: novaQuantidade })
+      .update(updatePayload)
       .eq('id', prodSelecionado.id);
 
     if (errProd) {
-      mostrarAlerta(`Erro ao atualizar quantidade do produto: ${errProd.message}`, 'erro');
+      mostrarAlerta(`Erro ao atualizar dados do produto: ${errProd.message}`, 'erro');
     } else {
-      mostrarAlerta(`Movimentação de ${movTipo} efetuada! Novo saldo: ${novaQuantidade} peças.`);
+      mostrarAlerta(`Movimentação efetuada com sucesso! Produto atribuído e atualizado.`);
       setMovItem('');
       setMovQtd(1);
       setMovObs('');
@@ -426,7 +443,7 @@ export default function PainelAdmin() {
           )
         )}
 
-        {/* NAVEGAÇÃO DE ABAS (OCULTA NA IMPRESSÃO) */}
+        {/* NAVEGAÇÃO DE ABAS */}
         <div className="bg-white p-1.5 rounded-xl shadow-sm border border-slate-200 flex flex-wrap gap-2 print:hidden">
           <button
             onClick={() => setAbaAtiva('movimentacao')}
@@ -488,40 +505,31 @@ export default function PainelAdmin() {
           </div>
         )}
 
-        {/* ABA 1: MOVIMENTAÇÃO */}
+        {/* ABA 1: MOVIMENTAÇÃO E ATRIBUIÇÃO AO CLIENTE */}
         {abaAtiva === 'movimentacao' && (
           <div className="space-y-6">
             <form onSubmit={handleConfirmarMovimentacao} className="bg-white rounded-xl shadow-sm p-6 border border-slate-200 print:hidden">
               <h3 className="text-base font-bold text-slate-800 mb-4">
-                Registrar Entrada / Saída de Estoque
-                {clienteFiltro && (
-                  <span className="text-blue-600 text-xs ml-2 font-normal">
-                    (Exibindo itens de {clienteAtualObjeto?.nome})
-                  </span>
-                )}
+                Registrar Entrada / Saída de Estoque & Atribuir ao Cliente
               </h3>
+
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
                 <div>
                   <label className="block text-xs font-bold text-slate-600 mb-1">
-                    Selecione o Uniforme / Item * ({produtosFiltrados.length} disponíveis)
+                    Selecione o Item do Catálogo Geral * ({produtos.length} disponíveis)
                   </label>
                   <select
                     value={movItem}
-                    onChange={(e) => {
-                      const idSel = e.target.value;
-                      setMovItem(idSel);
-                      const prod = produtos.find((p) => p.id === idSel);
-                      if (prod && prod.cliente_id) setMovCliente(prod.cliente_id);
-                    }}
+                    onChange={(e) => setMovItem(e.target.value)}
                     className="w-full p-2.5 border rounded-lg text-xs bg-white font-medium text-slate-800"
                     required
                   >
                     <option value="">
-                      {produtosFiltrados.length === 0
-                        ? '-- Nenhum produto encontrado --'
-                        : `-- Escolha um Item (${produtosFiltrados.length} disponíveis) --`}
+                      {produtos.length === 0
+                        ? '-- Nenhum produto no catálogo --'
+                        : `-- Escolha um Item (${produtos.length} disponíveis) --`}
                     </option>
-                    {produtosFiltrados.map((p, idx) => {
+                    {produtos.map((p, idx) => {
                       const idVal = p.id || p.codigo || idx;
                       const nomeExibicao = p.descricao || p.nome || `Produto #${idx + 1}`;
                       const codExibicao = p.codigo ? `(${p.codigo})` : '';
@@ -536,16 +544,19 @@ export default function PainelAdmin() {
                 </div>
 
                 <div>
-                  <label className="block text-xs font-bold text-slate-600 mb-1">Atribuir ao Cliente Cadastrado</label>
+                  <label className="block text-xs font-bold text-slate-600 mb-1">
+                    Atribuir ao Cliente *
+                  </label>
                   <select
                     value={movCliente}
                     onChange={(e) => setMovCliente(e.target.value)}
                     className="w-full p-2.5 border rounded-lg text-xs bg-white font-medium text-slate-800"
+                    required
                   >
-                    <option value="">-- Nenhum / Uso Geral --</option>
+                    <option value="">-- Selecione o Cliente Destino --</option>
                     {clientes.map((c, idx) => (
                       <option key={c.id || idx} value={c.id || idx}>
-                        {c.nome || c.razao_social || 'Cliente'}
+                        🏢 {c.nome || c.razao_social || 'Cliente'}
                       </option>
                     ))}
                   </select>
@@ -556,10 +567,10 @@ export default function PainelAdmin() {
                   <select
                     value={movTipo}
                     onChange={(e) => setMovTipo(e.target.value as 'ENTRADA' | 'SAIDA')}
-                    className="w-full p-2.5 border rounded-lg text-xs bg-bold"
+                    className="w-full p-2.5 border rounded-lg text-xs font-bold"
                   >
+                    <option value="ENTRADA">🟢 Entrada (Abastecer / Atribuir Lote)</option>
                     <option value="SAIDA">🔴 Saída (Retirada / Entrega)</option>
-                    <option value="ENTRADA">🟢 Entrada (Lançamento / Compra)</option>
                   </select>
                 </div>
               </div>
@@ -569,27 +580,54 @@ export default function PainelAdmin() {
                   <label className="block text-xs font-bold text-slate-600 mb-1">Quantidade de Peças *</label>
                   <input
                     type="number"
-                    min="1"
+                    min="0"
                     value={movQtd}
                     onChange={(e) => setMovQtd(e.target.value)}
                     className="w-full p-2.5 border rounded-lg text-xs font-bold"
                     required
                   />
                 </div>
-                <div className="md:col-span-2">
-                  <label className="block text-xs font-bold text-slate-600 mb-1">Observação / Solicitação / Colaborador</label>
+
+                <div>
+                  <label className="block text-xs font-bold text-amber-700 mb-1">
+                    Estoque Mínimo para este Cliente (Alerta Amarelo)
+                  </label>
                   <input
-                    type="text"
-                    value={movObs}
-                    onChange={(e) => setMovObs(e.target.value)}
-                    placeholder="Ex: Entrega lote mensal / Solicitante: João - Produção"
-                    className="w-full p-2.5 border rounded-lg text-xs"
+                    type="number"
+                    value={movEstoqueMinimo}
+                    onChange={(e) => setMovEstoqueMinimo(e.target.value)}
+                    placeholder="Ex: 10"
+                    className="w-full p-2.5 border border-amber-300 rounded-lg text-xs bg-amber-50/50"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-red-700 mb-1">
+                    Mínimo Crítico para este Cliente (Alerta Vermelho)
+                  </label>
+                  <input
+                    type="number"
+                    value={movMinimoCritico}
+                    onChange={(e) => setMovMinimoCritico(e.target.value)}
+                    placeholder="Ex: 3"
+                    className="w-full p-2.5 border border-red-300 rounded-lg text-xs bg-red-50/50"
                   />
                 </div>
               </div>
 
+              <div className="mb-4">
+                <label className="block text-xs font-bold text-slate-600 mb-1">Observação / Solicitação / Colaborador</label>
+                <input
+                  type="text"
+                  value={movObs}
+                  onChange={(e) => setMovObs(e.target.value)}
+                  placeholder="Ex: Entrega de lote inicial / Solicitante: Pedro - Operação"
+                  className="w-full p-2.5 border rounded-lg text-xs"
+                />
+              </div>
+
               <button type="submit" className="bg-blue-600 text-white font-bold px-6 py-2.5 rounded-lg text-xs hover:bg-blue-700 transition-colors shadow">
-                Confirmar Movimentação
+                Confirmar Atribuição / Movimentação
               </button>
             </form>
 
@@ -616,6 +654,7 @@ export default function PainelAdmin() {
                       <th className="p-3">CÓDIGO</th>
                       <th className="p-3">UNIFORME / DESCRIÇÃO</th>
                       <th className="p-3">CLIENTE VINCULADO</th>
+                      <th className="p-3">ESTOQUE MÍNIMO</th>
                       <th className="p-3">QTD. ESTOQUE</th>
                       <th className="p-3">STATUS</th>
                     </tr>
@@ -623,7 +662,7 @@ export default function PainelAdmin() {
                   <tbody className="divide-y divide-slate-100 text-xs">
                     {produtosFiltrados.length === 0 ? (
                       <tr>
-                        <td colSpan={5} className="p-4 text-center text-slate-400 font-medium">
+                        <td colSpan={6} className="p-4 text-center text-slate-400 font-medium">
                           Nenhum produto cadastrado para este cliente.
                         </td>
                       </tr>
@@ -659,7 +698,10 @@ export default function PainelAdmin() {
                             <td className="p-3 font-mono font-bold text-blue-600">{item.codigo || '—'}</td>
                             <td className="p-3 font-bold text-slate-800">{item.descricao || item.nome || '—'}</td>
                             <td className="p-3 font-medium text-slate-600">
-                              {clienteRel ? clienteRel.nome : '— (Geral)'}
+                              {clienteRel ? clienteRel.nome : '— (Sem vínculo)'}
+                            </td>
+                            <td className="p-3 text-slate-500 font-medium">
+                              Mín: {min} / Crítico: {crit}
                             </td>
                             <td className="p-3 font-bold text-slate-700">{qtd} un</td>
                             <td className="p-3">{statusBadge}</td>
@@ -674,12 +716,11 @@ export default function PainelAdmin() {
           </div>
         )}
 
-        {/* ABA 2: RELATÓRIO & DASHBOARD ANALÍTICO */}
+        {/* ABA 2: RELATÓRIO & DASHBOARD */}
         {abaAtiva === 'relatorio' && (
           <div className="space-y-6">
             <div className="bg-white rounded-xl shadow-sm p-6 border border-slate-200 print:shadow-none print:border-none">
               
-              {/* CABEÇALHO EXECUTIVO DO RELATÓRIO */}
               <div className="flex justify-between items-start border-b pb-4 mb-6">
                 <div>
                   <h2 className="text-xl font-black text-slate-900">
@@ -702,7 +743,6 @@ export default function PainelAdmin() {
                 </button>
               </div>
 
-              {/* PAINEL DASHBOARD COMPLETO */}
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
                 <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
                   <span className="text-[10px] font-bold text-slate-400 uppercase">Índice de Saúde do Estoque</span>
@@ -723,7 +763,7 @@ export default function PainelAdmin() {
                 </div>
 
                 <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
-                  <span className="text-[10px] font-bold text-slate-400 uppercase">Resumo da Movimentação Recente</span>
+                  <span className="text-[10px] font-bold text-slate-400 uppercase">Resumo de Movimentação</span>
                   <div className="grid grid-cols-2 gap-2 mt-2">
                     <div>
                       <span className="text-[10px] font-bold text-emerald-600 uppercase block">Entradas</span>
@@ -737,7 +777,7 @@ export default function PainelAdmin() {
                 </div>
 
                 <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
-                  <span className="text-[10px] font-bold text-slate-400 uppercase">Itens Requerendo Ação URGENTE</span>
+                  <span className="text-[10px] font-bold text-slate-400 uppercase">Ação Urgente Necessária</span>
                   <div className="mt-2">
                     <span className="text-3xl font-black text-red-600">
                       {produtosCritico.length + produtosBaixo.length}
@@ -749,10 +789,9 @@ export default function PainelAdmin() {
                 </div>
               </div>
 
-              {/* PLANO DE AÇÃO / REPOSIÇÃO RECOMENDADA */}
               <div className="mb-6">
                 <h3 className="text-sm font-bold text-slate-800 uppercase mb-3">
-                  📋 Sugestão de Reposição / Ordem de Produção
+                  📋 Sugestão de Reposição Personalizada
                 </h3>
 
                 <div className="overflow-x-auto">
@@ -762,7 +801,7 @@ export default function PainelAdmin() {
                         <th className="p-2 border">CÓDIGO</th>
                         <th className="p-2 border">UNIFORME</th>
                         <th className="p-2 border">ESTOQUE ATUAL</th>
-                        <th className="p-2 border">MÍNIMO SEGURO</th>
+                        <th className="p-2 border">MÍNIMO DEFINIDO</th>
                         <th className="p-2 border">STATUS</th>
                         <th className="p-2 border">SUGESTÃO DE FABRICAÇÃO</th>
                       </tr>
@@ -807,7 +846,6 @@ export default function PainelAdmin() {
                 </div>
               </div>
 
-              {/* ASSINATURAS / RODAPÉ DO RELATÓRIO */}
               <div className="mt-12 pt-6 border-t grid grid-cols-2 gap-8 text-center print:block">
                 <div>
                   <div className="border-b border-slate-400 w-48 mx-auto mb-1"></div>
@@ -884,10 +922,12 @@ export default function PainelAdmin() {
           </div>
         )}
 
-        {/* ABA 4: CADASTRAR UNIFORME */}
+        {/* ABA 4: CADASTRAR UNIFORME (CATÁLOGO GERAL) */}
         {abaAtiva === 'uniforme' && (
           <form onSubmit={handleCadastrarUniforme} className="bg-white rounded-xl shadow-sm p-6 border border-slate-200">
-            <h3 className="text-base font-bold text-slate-800 mb-4">Cadastrar Novo Uniforme / Produto</h3>
+            <h3 className="text-base font-bold text-slate-800 mb-1">Cadastrar Novo Uniforme / Produto</h3>
+            <p className="text-xs text-slate-500 mb-4">Adiciona o modelo ao Catálogo Geral de peças disponíveis da empresa.</p>
+            
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
               <div>
                 <label className="block text-xs font-bold text-slate-600 mb-1">Descrição do Uniforme *</label>
@@ -901,7 +941,7 @@ export default function PainelAdmin() {
                 />
               </div>
               <div>
-                <label className="block text-xs font-bold text-slate-600 mb-1">Código / Referência (Vazio = Gerar Automático)</label>
+                <label className="block text-xs font-bold text-slate-600 mb-1">Código / Referência (Vazio = Gerar Auto)</label>
                 <input
                   type="text"
                   value={novoUniforme.codigo}
@@ -911,25 +951,7 @@ export default function PainelAdmin() {
                 />
               </div>
               <div>
-                <label className="block text-xs font-bold text-slate-600 mb-1">Vincular a um Cliente</label>
-                <select
-                  value={novoUniforme.cliente_id}
-                  onChange={(e) => setNovoUniforme({ ...novoUniforme, cliente_id: e.target.value })}
-                  className="w-full p-2.5 border rounded-lg text-xs bg-white"
-                >
-                  <option value="">-- Selecione um Cliente --</option>
-                  {clientes.map((c, idx) => (
-                    <option key={c.id || idx} value={c.id || idx}>
-                      {c.nome}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
-              <div>
-                <label className="block text-xs font-bold text-slate-600 mb-1">Quantidade Inicial</label>
+                <label className="block text-xs font-bold text-slate-600 mb-1">Estoque Inicial no Catálogo</label>
                 <input
                   type="number"
                   value={novoUniforme.quantidade}
@@ -937,28 +959,10 @@ export default function PainelAdmin() {
                   className="w-full p-2.5 border rounded-lg text-xs"
                 />
               </div>
-              <div>
-                <label className="block text-xs font-bold text-slate-600 mb-1">Estoque Mínimo (Alerta Amarelo)</label>
-                <input
-                  type="number"
-                  value={novoUniforme.estoque_minimo}
-                  onChange={(e) => setNovoUniforme({ ...novoUniforme, estoque_minimo: Number(e.target.value) })}
-                  className="w-full p-2.5 border rounded-lg text-xs"
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-bold text-slate-600 mb-1">Mínimo Crítico (Alerta Vermelho)</label>
-                <input
-                  type="number"
-                  value={novoUniforme.minimo_critico}
-                  onChange={(e) => setNovoUniforme({ ...novoUniforme, minimo_critico: Number(e.target.value) })}
-                  className="w-full p-2.5 border rounded-lg text-xs"
-                />
-              </div>
             </div>
 
             <button type="submit" className="bg-blue-600 text-white font-bold px-6 py-2.5 rounded-lg text-xs hover:bg-blue-700 transition-colors">
-              Cadastrar Uniforme
+              Cadastrar no Catálogo Geral
             </button>
           </form>
         )}
