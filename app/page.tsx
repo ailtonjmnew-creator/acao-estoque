@@ -13,8 +13,11 @@ export default function PainelAdmin() {
   const [usuarios, setUsuarios] = useState<any[]>([]);
   const [historico, setHistorico] = useState<any[]>([]);
 
-  // FILTRO PRINCIPAL DE CLIENTE
+  // FILTRO PRINCIPAL DE CLIENTE & SLICERS DO DASHBOARD
   const [clienteFiltro, setClienteFiltro] = useState<string>('');
+  const [dataInicio, setDataInicio] = useState<string>('');
+  const [dataFim, setDataFim] = useState<string>('');
+  const [statusFiltro, setStatusFiltro] = useState<string>('todos');
 
   const [erroSupabase, setErroSupabase] = useState<string | null>(null);
   const [mensagem, setMensagem] = useState({ tipo: '', texto: '' });
@@ -90,7 +93,7 @@ export default function PainelAdmin() {
         .from('estoque')
         .select('*')
         .order('created_at', { ascending: false })
-        .limit(200);
+        .limit(300);
 
       if (errH) console.error('Erro Histórico:', errH);
       if (dHistorico) setHistorico(dHistorico);
@@ -108,35 +111,63 @@ export default function PainelAdmin() {
   const gerarCodigoAuto = () => `UNI-${Math.floor(1000 + Math.random() * 9000)}`;
 
   // FILTRAGEM DINÂMICA
-  const produtosFiltrados = clienteFiltro
+  let produtosFiltrados = clienteFiltro
     ? produtos.filter((p) => p.cliente_id === clienteFiltro)
     : produtos;
 
-  const historicoFiltrado = clienteFiltro
+  if (statusFiltro === 'critico') {
+    produtosFiltrados = produtosFiltrados.filter(
+      (p) => (Number(p.quantidade) || 0) <= (Number(p.minimo_critico) || 3)
+    );
+  } else if (statusFiltro === 'baixo') {
+    produtosFiltrados = produtosFiltrados.filter(
+      (p) => (Number(p.quantidade) || 0) <= (Number(p.estoque_minimo) || 10)
+    );
+  } else if (statusFiltro === 'normal') {
+    produtosFiltrados = produtosFiltrados.filter(
+      (p) => (Number(p.quantidade) || 0) > (Number(p.estoque_minimo) || 10)
+    );
+  }
+
+  let historicoFiltrado = clienteFiltro
     ? historico.filter((h) => h.cliente_id === clienteFiltro)
     : historico;
 
+  if (dataInicio) {
+    historicoFiltrado = historicoFiltrado.filter(
+      (h) => new Date(h.created_at) >= new Date(`${dataInicio}T00:00:00`)
+    );
+  }
+  if (dataFim) {
+    historicoFiltrado = historicoFiltrado.filter(
+      (h) => new Date(h.created_at) <= new Date(`${dataFim}T23:59:59`)
+    );
+  }
+
   const clienteAtualObjeto = clientes.find((c) => c.id === clienteFiltro);
 
-  // CÁLCULOS DAS MÉTRICAS
-  const totalPecas = produtosFiltrados.reduce((acc, item) => acc + (Number(item.quantidade) || 0), 0);
+  // CÁLCULOS DAS MÉTRICAS (AJUSTADO: SE ESTÁ CRÍTICO, TAMBÉM É CONTADO COMO BAIXO)
+  const baseProdutosParaMetrica = clienteFiltro
+    ? produtos.filter((p) => p.cliente_id === clienteFiltro)
+    : produtos;
 
-  const produtosCritico = produtosFiltrados.filter(
+  const totalPecas = baseProdutosParaMetrica.reduce((acc, item) => acc + (Number(item.quantidade) || 0), 0);
+
+  const produtosCritico = baseProdutosParaMetrica.filter(
     (p) => (Number(p.quantidade) || 0) <= (Number(p.minimo_critico) || 3)
   );
 
-  const produtosBaixo = produtosFiltrados.filter(
-    (p) =>
-      (Number(p.quantidade) || 0) <= (Number(p.estoque_minimo) || 10) &&
-      (Number(p.quantidade) || 0) > (Number(p.minimo_critico) || 3)
+  // Inclusivo: Se está abaixo do crítico, também está abaixo do estoque mínimo
+  const produtosBaixo = baseProdutosParaMetrica.filter(
+    (p) => (Number(p.quantidade) || 0) <= (Number(p.estoque_minimo) || 10)
   );
 
-  const produtosOk = produtosFiltrados.filter(
+  const produtosOk = baseProdutosParaMetrica.filter(
     (p) => (Number(p.quantidade) || 0) > (Number(p.estoque_minimo) || 10)
   );
 
-  const percentSaudavel = produtosFiltrados.length
-    ? Math.round((produtosOk.length / produtosFiltrados.length) * 100)
+  const percentSaudavel = baseProdutosParaMetrica.length
+    ? Math.round((produtosOk.length / baseProdutosParaMetrica.length) * 100)
     : 100;
 
   // MOVIMENTAÇÕES ACUMULADAS
@@ -147,6 +178,26 @@ export default function PainelAdmin() {
   const totalSaidas = historicoFiltrado
     .filter((h) => h.tipo_movimento === 'SAIDA')
     .reduce((acc, h) => acc + (Number(h.quantidade) || 0), 0);
+
+  // CÁLCULO TOP 5 MAIS SOLICITADOS (RANKING)
+  const consumoPorProduto: { [key: string]: { nome: string; qtd: number } } = {};
+  historicoFiltrado
+    .filter((h) => h.tipo_movimento === 'SAIDA')
+    .forEach((h) => {
+      const prod = produtos.find((p) => p.id === h.produto_id);
+      const nome = prod ? prod.descricao || prod.nome : 'Produto';
+      const key = h.produto_id || nome;
+      if (!consumoPorProduto[key]) {
+        consumoPorProduto[key] = { nome, qtd: 0 };
+      }
+      consumoPorProduto[key].qtd += Number(h.quantidade) || 0;
+    });
+
+  const topConsumidos = Object.values(consumoPorProduto)
+    .sort((a, b) => b.qtd - a.qtd)
+    .slice(0, 5);
+
+  const maxConsumo = topConsumidos.length > 0 ? topConsumidos[0].qtd : 1;
 
   // ALERTAS DE CLIENTES GLOBAIS
   const clienteIdsComAlerta = Array.from(
@@ -181,11 +232,7 @@ export default function PainelAdmin() {
       mostrarAlerta(`Erro ao cadastrar uniforme: ${error.message}`, 'erro');
     } else {
       mostrarAlerta(`Uniforme "${novoUniforme.descricao}" cadastrado no Catálogo Geral com sucesso!`);
-      setNovoUniforme({
-        descricao: '',
-        codigo: '',
-        quantidade: 0
-      });
+      setNovoUniforme({ descricao: '', codigo: '', quantidade: 0 });
       await carregarDados();
       setAbaAtiva('movimentacao');
     }
@@ -376,7 +423,7 @@ export default function PainelAdmin() {
           </div>
         )}
 
-        {/* MÉTRICAS GERAIS OU DO CLIENTE */}
+        {/* MÉTRICAS GERAIS OU DO CLIENTE (AJUSTADO: ESTOQUE BAIXO INCLUI CRÍTICO) */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 print:grid-cols-4">
           <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 print:border-slate-300">
             <p className="text-xs font-bold text-slate-400 uppercase">
@@ -390,7 +437,7 @@ export default function PainelAdmin() {
               {clienteFiltro ? 'Itens Cadastrados' : 'Clientes Cadastrados'}
             </p>
             <p className="text-2xl font-black text-blue-600 mt-1">
-              {clienteFiltro ? produtosFiltrados.length : clientes.length}
+              {clienteFiltro ? baseProdutosParaMetrica.length : clientes.length}
             </p>
           </div>
 
@@ -660,14 +707,14 @@ export default function PainelAdmin() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 text-xs">
-                    {produtosFiltrados.length === 0 ? (
+                    {baseProdutosParaMetrica.length === 0 ? (
                       <tr>
                         <td colSpan={6} className="p-4 text-center text-slate-400 font-medium">
                           Nenhum produto cadastrado para este cliente.
                         </td>
                       </tr>
                     ) : (
-                      produtosFiltrados.map((item, idx) => {
+                      baseProdutosParaMetrica.map((item, idx) => {
                         const qtd = Number(item.quantidade) || 0;
                         const min = Number(item.estoque_minimo) || 10;
                         const crit = Number(item.minimo_critico) || 3;
@@ -716,18 +763,72 @@ export default function PainelAdmin() {
           </div>
         )}
 
-        {/* ABA 2: RELATÓRIO & DASHBOARD */}
+        {/* ABA 2: RELATÓRIO & DASHBOARD (COMPLETO E PROFISSIONAL) */}
         {abaAtiva === 'relatorio' && (
           <div className="space-y-6">
+            
+            {/* PAINEL DE SLICERS E FILTROS DO DASHBOARD */}
+            <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 flex flex-wrap items-center justify-between gap-4 print:hidden">
+              <div className="flex flex-wrap items-center gap-3">
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase mb-0.5">Data Início</label>
+                  <input
+                    type="date"
+                    value={dataInicio}
+                    onChange={(e) => setDataInicio(e.target.value)}
+                    className="p-1.5 border rounded-lg text-xs font-semibold text-slate-700"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase mb-0.5">Data Fim</label>
+                  <input
+                    type="date"
+                    value={dataFim}
+                    onChange={(e) => setDataFim(e.target.value)}
+                    className="p-1.5 border rounded-lg text-xs font-semibold text-slate-700"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase mb-0.5">Status de Estoque</label>
+                  <select
+                    value={statusFiltro}
+                    onChange={(e) => setStatusFiltro(e.target.value)}
+                    className="p-1.5 border rounded-lg text-xs font-semibold text-slate-700 bg-white"
+                  >
+                    <option value="todos">Todos os Status</option>
+                    <option value="critico">🚨 Apenas Críticos</option>
+                    <option value="baixo">⚠️ Apenas Baixos (inclui críticos)</option>
+                    <option value="normal">✅ Normal</option>
+                  </select>
+                </div>
+              </div>
+
+              {(dataInicio || dataFim || statusFiltro !== 'todos') && (
+                <button
+                  onClick={() => {
+                    setDataInicio('');
+                    setDataFim('');
+                    setStatusFiltro('todos');
+                  }}
+                  className="text-xs font-bold text-red-600 hover:underline"
+                >
+                  Clear Filters (Limpar)
+                </button>
+              )}
+            </div>
+
             <div className="bg-white rounded-xl shadow-sm p-6 border border-slate-200 print:shadow-none print:border-none">
               
+              {/* CABEÇALHO DO RELATÓRIO */}
               <div className="flex justify-between items-start border-b pb-4 mb-6">
                 <div>
-                  <h2 className="text-xl font-black text-slate-900">
-                    RELATÓRIO DIAGNÓSTICO DE ESTOQUE DE UNIFORMES
+                  <h2 className="text-xl font-black text-slate-900 uppercase">
+                    Consumos e Posição do Estoque — Agosto de 2026
                   </h2>
                   <p className="text-xs text-slate-500 mt-0.5">
-                    Empresa: <strong className="text-slate-800">{clienteFiltro ? clienteAtualObjeto?.nome : 'Todas as Empresas (Consolidado)'}</strong>
+                    Cliente: <strong className="text-slate-800">{clienteFiltro ? clienteAtualObjeto?.nome : 'Todas as Empresas (Consolidado)'}</strong>
                     {clienteAtualObjeto?.cnpj && ` • CNPJ: ${clienteAtualObjeto.cnpj}`}
                   </p>
                   <p className="text-xs text-slate-400 mt-0.5">
@@ -743,52 +844,140 @@ export default function PainelAdmin() {
                 </button>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+              {/* CARDS DE INDICADORES (KPI CARDS) */}
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
                 <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
-                  <span className="text-[10px] font-bold text-slate-400 uppercase">Índice de Saúde do Estoque</span>
-                  <div className="flex items-center justify-between mt-2">
-                    <span className="text-3xl font-black text-slate-800">{percentSaudavel}%</span>
-                    <span className={`text-xs font-bold px-2.5 py-1 rounded ${
-                      percentSaudavel >= 80 ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'
-                    }`}>
-                      {percentSaudavel >= 80 ? 'Excelente' : 'Atenção Necessária'}
-                    </span>
-                  </div>
-                  <div className="w-full bg-slate-200 h-2 rounded-full mt-3 overflow-hidden">
-                    <div
-                      className={`h-full ${percentSaudavel >= 80 ? 'bg-emerald-500' : 'bg-amber-500'}`}
-                      style={{ width: `${percentSaudavel}%` }}
-                    />
+                  <span className="text-[10px] font-bold text-slate-400 uppercase">Total Movimentado</span>
+                  <div className="mt-2">
+                    <span className="text-3xl font-black text-slate-800">{totalEntradas + totalSaidas}</span>
+                    <span className="text-xs text-slate-500 ml-1">peças</span>
                   </div>
                 </div>
 
                 <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
-                  <span className="text-[10px] font-bold text-slate-400 uppercase">Resumo de Movimentação</span>
-                  <div className="grid grid-cols-2 gap-2 mt-2">
-                    <div>
-                      <span className="text-[10px] font-bold text-emerald-600 uppercase block">Entradas</span>
-                      <span className="text-lg font-bold text-slate-800">+{totalEntradas} un</span>
-                    </div>
-                    <div>
-                      <span className="text-[10px] font-bold text-red-600 uppercase block">Saídas</span>
-                      <span className="text-lg font-bold text-slate-800">-{totalSaidas} un</span>
-                    </div>
+                  <span className="text-[10px] font-bold text-emerald-600 uppercase">Entradas (Abastecimento)</span>
+                  <div className="mt-2">
+                    <span className="text-3xl font-black text-emerald-700">+{totalEntradas}</span>
+                    <span className="text-xs text-slate-500 ml-1">peças</span>
                   </div>
                 </div>
 
                 <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
-                  <span className="text-[10px] font-bold text-slate-400 uppercase">Ação Urgente Necessária</span>
+                  <span className="text-[10px] font-bold text-rose-600 uppercase">Saídas (Entregues ao Cliente)</span>
+                  <div className="mt-2">
+                    <span className="text-3xl font-black text-rose-700">-{totalSaidas}</span>
+                    <span className="text-xs text-slate-500 ml-1">peças</span>
+                  </div>
+                </div>
+
+                {/* SINALIZANDO NOS DOIS CAMPOS SE TIVER CRÍTICO */}
+                <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
+                  <span className="text-[10px] font-bold text-red-600 uppercase">Ação Urgente Necessária</span>
                   <div className="mt-2">
                     <span className="text-3xl font-black text-red-600">
-                      {produtosCritico.length + produtosBaixo.length}
+                      {produtosBaixo.length}
                     </span>
                     <span className="text-xs font-bold text-slate-500 ml-2">
-                      ({produtosCritico.length} críticos / {produtosBaixo.length} baixos)
+                      ({produtosCritico.length} {produtosCritico.length === 1 ? 'crítico' : 'críticos'} / {produtosBaixo.length} {produtosBaixo.length === 1 ? 'baixo' : 'baixos'})
                     </span>
                   </div>
                 </div>
               </div>
 
+              {/* GRÁFICOS VISUAIS E RANKING */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+                
+                {/* GRÁFICO 1: RANKING TOP 5 ITENS MAIS SOLICITADOS */}
+                <div className="bg-slate-50 p-5 rounded-xl border border-slate-200">
+                  <h3 className="text-xs font-bold text-slate-700 uppercase tracking-wider mb-4 flex items-center justify-between">
+                    <span>🏆 Top 5 Itens Mais Solicitados</span>
+                    <span className="text-[10px] text-slate-400 font-normal">Baseado nas Saídas</span>
+                  </h3>
+
+                  {topConsumidos.length === 0 ? (
+                    <div className="p-8 text-center text-xs text-slate-400">
+                      Nenhuma saída de produto registrada neste período.
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      {topConsumidos.map((item, idx) => {
+                        const percent = Math.round((item.qtd / maxConsumo) * 100);
+                        return (
+                          <div key={idx} className="space-y-1">
+                            <div className="flex justify-between text-xs font-bold text-slate-800">
+                              <span className="truncate max-w-[200px]">{item.nome}</span>
+                              <span className="text-blue-700">{item.qtd} peças</span>
+                            </div>
+                            <div className="w-full bg-slate-200 h-2.5 rounded-full overflow-hidden">
+                              <div
+                                className="bg-blue-600 h-full rounded-full transition-all duration-500"
+                                style={{ width: `${percent}%` }}
+                              />
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+
+                {/* GRÁFICO 2: BALANÇO VISUAL DO ESTOQUE */}
+                <div className="bg-slate-50 p-5 rounded-xl border border-slate-200 flex flex-col justify-between">
+                  <div>
+                    <h3 className="text-xs font-bold text-slate-700 uppercase tracking-wider mb-4">
+                      📊 Saúde e Proporção do Estoque
+                    </h3>
+
+                    <div className="space-y-4">
+                      <div>
+                        <div className="flex justify-between text-xs font-bold mb-1">
+                          <span className="text-emerald-700">✅ Estoque em Nível Normal</span>
+                          <span>{produtosOk.length} itens ({baseProdutosParaMetrica.length ? Math.round((produtosOk.length / baseProdutosParaMetrica.length) * 100) : 0}%)</span>
+                        </div>
+                        <div className="w-full bg-slate-200 h-2.5 rounded-full overflow-hidden">
+                          <div
+                            className="bg-emerald-500 h-full rounded-full"
+                            style={{ width: `${baseProdutosParaMetrica.length ? (produtosOk.length / baseProdutosParaMetrica.length) * 100 : 0}%` }}
+                          />
+                        </div>
+                      </div>
+
+                      <div>
+                        <div className="flex justify-between text-xs font-bold mb-1">
+                          <span className="text-amber-700">⚠️ Estoque em Nível Baixo</span>
+                          <span>{produtosBaixo.length} itens ({baseProdutosParaMetrica.length ? Math.round((produtosBaixo.length / baseProdutosParaMetrica.length) * 100) : 0}%)</span>
+                        </div>
+                        <div className="w-full bg-slate-200 h-2.5 rounded-full overflow-hidden">
+                          <div
+                            className="bg-amber-500 h-full rounded-full"
+                            style={{ width: `${baseProdutosParaMetrica.length ? (produtosBaixo.length / baseProdutosParaMetrica.length) * 100 : 0}%` }}
+                          />
+                        </div>
+                      </div>
+
+                      <div>
+                        <div className="flex justify-between text-xs font-bold mb-1">
+                          <span className="text-red-700">🚨 Estoque Crítico (Urgente)</span>
+                          <span>{produtosCritico.length} itens ({baseProdutosParaMetrica.length ? Math.round((produtosCritico.length / baseProdutosParaMetrica.length) * 100) : 0}%)</span>
+                        </div>
+                        <div className="w-full bg-slate-200 h-2.5 rounded-full overflow-hidden">
+                          <div
+                            className="bg-red-600 h-full rounded-full"
+                            style={{ width: `${baseProdutosParaMetrica.length ? (produtosCritico.length / baseProdutosParaMetrica.length) * 100 : 0}%` }}
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <p className="text-[11px] text-slate-400 mt-4 italic">
+                    * Nota: Itens classificados como críticos são automaticamente contemplados no alerta de estoque baixo.
+                  </p>
+                </div>
+
+              </div>
+
+              {/* TABELA DE SUGESTÃO DE REPOSIÇÃO */}
               <div className="mb-6">
                 <h3 className="text-sm font-bold text-slate-800 uppercase mb-3">
                   📋 Sugestão de Reposição Personalizada
@@ -817,7 +1006,7 @@ export default function PainelAdmin() {
                         let badgeColor = 'bg-emerald-100 text-emerald-800';
 
                         if (qtd <= crit) {
-                          statusText = 'CRÍTICO';
+                          statusText = 'CRÍTICO / BAIXO';
                           badgeColor = 'bg-red-100 text-red-800 font-bold';
                         } else if (qtd <= min) {
                           statusText = 'BAIXO';
@@ -846,6 +1035,7 @@ export default function PainelAdmin() {
                 </div>
               </div>
 
+              {/* CAMPOS DE ASSINATURA */}
               <div className="mt-12 pt-6 border-t grid grid-cols-2 gap-8 text-center print:block">
                 <div>
                   <div className="border-b border-slate-400 w-48 mx-auto mb-1"></div>
