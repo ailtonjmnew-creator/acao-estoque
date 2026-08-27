@@ -4,18 +4,20 @@ import { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
 
 export default function PainelAdmin() {
-  const [abaAtiva, setAbaAtiva] = useState<'movimentacao' | 'historico' | 'uniforme' | 'cliente' | 'usuario'>('movimentacao');
+  const [abaAtiva, setAbaAtiva] = useState<
+    'movimentacao' | 'historico' | 'uniforme' | 'cliente' | 'usuario' | 'relatorio'
+  >('movimentacao');
 
   const [clientes, setClientes] = useState<any[]>([]);
   const [produtos, setProdutos] = useState<any[]>([]);
   const [usuarios, setUsuarios] = useState<any[]>([]);
   const [historico, setHistorico] = useState<any[]>([]);
 
+  // FILTRO PRINCIPAL DE CLIENTE
+  const [clienteFiltro, setClienteFiltro] = useState<string>('');
+
   const [erroSupabase, setErroSupabase] = useState<string | null>(null);
   const [mensagem, setMensagem] = useState({ tipo: '', texto: '' });
-
-  // Filtro de Cliente na Tabela de Estoque
-  const [filtroClienteEstoque, setFiltroClienteEstoque] = useState('');
 
   // Formulário Movimentação
   const [movItem, setMovItem] = useState('');
@@ -49,15 +51,19 @@ export default function PainelAdmin() {
     carregarDados();
   }, []);
 
+  useEffect(() => {
+    if (clienteFiltro) {
+      setMovCliente(clienteFiltro);
+    }
+  }, [clienteFiltro]);
+
   async function carregarDados() {
     setErroSupabase(null);
     try {
-      // 1. Busca Clientes
       const { data: dClientes, error: errC } = await supabase.from('clientes').select('*');
       if (errC) console.error('Erro Clientes:', errC);
       if (dClientes) setClientes(dClientes);
 
-      // 2. Busca Produtos
       const { data: dProdutos, error: errP } = await supabase.from('produtos').select('*');
       if (errP) {
         console.error('Erro Produtos:', errP);
@@ -66,21 +72,18 @@ export default function PainelAdmin() {
         setProdutos(dProdutos);
       }
 
-      // 3. Busca Usuários
       const { data: dUsuarios, error: errU } = await supabase.from('usuarios').select('*');
       if (errU) console.error('Erro Usuários:', errU);
       if (dUsuarios) setUsuarios(dUsuarios);
 
-      // 4. Busca Histórico de Estoque
       const { data: dHistorico, error: errH } = await supabase
         .from('estoque')
         .select('*')
         .order('created_at', { ascending: false })
-        .limit(100);
+        .limit(200);
 
       if (errH) console.error('Erro Histórico:', errH);
       if (dHistorico) setHistorico(dHistorico);
-
     } catch (err: any) {
       console.error('Erro geral:', err);
       setErroSupabase(`Falha de conexão: ${err?.message || 'Erro desconhecido'}`);
@@ -94,19 +97,48 @@ export default function PainelAdmin() {
 
   const gerarCodigoAuto = () => `UNI-${Math.floor(1000 + Math.random() * 9000)}`;
 
-  // --- CÁLCULOS AUTOMÁTICOS DE ESTOQUE E ALERTAS DE CLIENTES ---
-  const totalPecas = produtos.reduce((acc, item) => acc + (Number(item.quantidade) || 0), 0);
+  // FILTRAGEM DINÂMICA
+  const produtosFiltrados = clienteFiltro
+    ? produtos.filter((p) => p.cliente_id === clienteFiltro)
+    : produtos;
 
-  const produtosCritico = produtos.filter(
+  const historicoFiltrado = clienteFiltro
+    ? historico.filter((h) => h.cliente_id === clienteFiltro)
+    : historico;
+
+  const clienteAtualObjeto = clientes.find((c) => c.id === clienteFiltro);
+
+  // CÁLCULOS DAS MÉTRICAS
+  const totalPecas = produtosFiltrados.reduce((acc, item) => acc + (Number(item.quantidade) || 0), 0);
+
+  const produtosCritico = produtosFiltrados.filter(
     (p) => (Number(p.quantidade) || 0) <= (Number(p.minimo_critico) || 3)
   );
 
-  const produtosBaixo = produtos.filter(
+  const produtosBaixo = produtosFiltrados.filter(
     (p) =>
       (Number(p.quantidade) || 0) <= (Number(p.estoque_minimo) || 10) &&
       (Number(p.quantidade) || 0) > (Number(p.minimo_critico) || 3)
   );
 
+  const produtosOk = produtosFiltrados.filter(
+    (p) => (Number(p.quantidade) || 0) > (Number(p.estoque_minimo) || 10)
+  );
+
+  const percentSaudavel = produtosFiltrados.length
+    ? Math.round((produtosOk.length / produtosFiltrados.length) * 100)
+    : 100;
+
+  // MOVIMENTAÇÕES ACUMULADAS
+  const totalEntradas = historicoFiltrado
+    .filter((h) => h.tipo_movimento === 'ENTRADA')
+    .reduce((acc, h) => acc + (Number(h.quantidade) || 0), 0);
+
+  const totalSaidas = historicoFiltrado
+    .filter((h) => h.tipo_movimento === 'SAIDA')
+    .reduce((acc, h) => acc + (Number(h.quantidade) || 0), 0);
+
+  // ALERTAS DE CLIENTES GLOBAIS
   const clienteIdsComAlerta = Array.from(
     new Set(
       produtos
@@ -114,15 +146,9 @@ export default function PainelAdmin() {
         .map((p) => p.cliente_id)
     )
   );
-
   const clientesEmAlerta = clientes.filter((c) => clienteIdsComAlerta.includes(c.id));
 
-  // Produtos filtrados para exibição na tabela
-  const produtosExibidos = filtroClienteEstoque
-    ? produtos.filter((p) => p.cliente_id === filtroClienteEstoque)
-    : produtos;
-
-  // --- HANDLERS ---
+  // HANDLERS
   const handleCadastrarUniforme = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!novoUniforme.descricao) return;
@@ -220,7 +246,6 @@ export default function PainelAdmin() {
       novaQuantidade += qtdMovida;
     }
 
-    // 1. Registra no histórico de estoque
     const payloadHist = {
       produto_id: prodSelecionado.id || movItem,
       cliente_id: movCliente || prodSelecionado.cliente_id || null,
@@ -237,7 +262,6 @@ export default function PainelAdmin() {
       return;
     }
 
-    // 2. Atualiza o saldo real na tabela produtos
     const { error: errProd } = await supabase
       .from('produtos')
       .update({ quantidade: novaQuantidade })
@@ -254,16 +278,23 @@ export default function PainelAdmin() {
     }
   };
 
+  const abrirEImprimirRelatorio = () => {
+    setAbaAtiva('relatorio');
+    setTimeout(() => {
+      window.print();
+    }, 500);
+  };
+
   return (
-    <div className="min-h-screen bg-slate-50 p-4 md:p-6">
+    <div className="min-h-screen bg-slate-50 p-4 md:p-6 print:p-0 print:bg-white">
       <div className="max-w-6xl mx-auto space-y-6">
         
         {/* CABEÇALHO ADMIN */}
-        <div className="bg-white rounded-xl p-5 shadow-sm border border-slate-200 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+        <div className="bg-white rounded-xl p-5 shadow-sm border border-slate-200 flex flex-col md:flex-row justify-between items-start md:items-center gap-4 print:border-none print:shadow-none print:p-0 print:mb-4">
           <div>
             <div className="flex items-center gap-2">
               <h1 className="text-xl font-bold text-slate-900">Ação Estoque</h1>
-              <span className="bg-slate-800 text-white text-[10px] font-bold px-2 py-0.5 rounded tracking-wide uppercase">
+              <span className="bg-slate-800 text-white text-[10px] font-bold px-2 py-0.5 rounded tracking-wide uppercase print:hidden">
                 Painel Admin
               </span>
             </div>
@@ -272,77 +303,131 @@ export default function PainelAdmin() {
             </p>
           </div>
 
-          <button
-            onClick={carregarDados}
-            className="px-3 py-1.5 bg-blue-600 text-white text-xs font-bold rounded-lg hover:bg-blue-700 transition-colors shadow flex items-center gap-1"
-          >
-            🔄 Recarregar Dados
-          </button>
+          <div className="flex items-center gap-2 print:hidden">
+            <button
+              onClick={abrirEImprimirRelatorio}
+              className="px-3 py-1.5 bg-emerald-600 text-white text-xs font-bold rounded-lg hover:bg-emerald-700 transition-colors shadow flex items-center gap-1"
+            >
+              🖨️ Gerar PDF / Imprimir
+            </button>
+            <button
+              onClick={carregarDados}
+              className="px-3 py-1.5 bg-blue-600 text-white text-xs font-bold rounded-lg hover:bg-blue-700 transition-colors shadow flex items-center gap-1"
+            >
+              🔄 Recarregar
+            </button>
+          </div>
+        </div>
+
+        {/* SELETOR DE CLIENTE EM DESTAQUE */}
+        <div className="bg-gradient-to-r from-blue-900 to-indigo-900 text-white p-5 rounded-xl shadow-md flex flex-col md:flex-row items-start md:items-center justify-between gap-4 print:bg-none print:text-black print:p-0 print:border-b print:pb-4">
+          <div className="space-y-1">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-blue-300 print:text-slate-500">
+              Filtro de Visualização & Relatórios
+            </span>
+            <h2 className="text-base font-bold">
+              {clienteFiltro
+                ? `🏢 Cliente: ${clienteAtualObjeto?.nome || clienteAtualObjeto?.razao_social}`
+                : '🌐 Visão Geral (Todos os Clientes)'}
+            </h2>
+            <p className="text-xs text-blue-200 print:text-slate-600">
+              {clienteFiltro
+                ? 'Exibindo estatísticas, produtos, relatórios e histórico exclusivo desta empresa.'
+                : 'Selecione um cliente ao lado para isolar o estoque e emitir o relatório individual.'}
+            </p>
+          </div>
+
+          <div className="w-full md:w-auto min-w-[280px] print:hidden">
+            <select
+              value={clienteFiltro}
+              onChange={(e) => setClienteFiltro(e.target.value)}
+              className="w-full p-3 rounded-lg text-xs font-bold bg-white text-slate-900 shadow-inner border border-blue-300 focus:ring-2 focus:ring-blue-400 focus:outline-none"
+            >
+              <option value="">-- Todos os Clientes (Visão Geral Admin) --</option>
+              {clientes.map((c) => (
+                <option key={c.id} value={c.id}>
+                  🏢 {c.nome || c.razao_social}
+                </option>
+              ))}
+            </select>
+          </div>
         </div>
 
         {erroSupabase && (
-          <div className="p-4 rounded-xl text-xs font-bold bg-red-100 text-red-800 border border-red-300">
+          <div className="p-4 rounded-xl text-xs font-bold bg-red-100 text-red-800 border border-red-300 print:hidden">
             ⚠️ <strong>Erro no Supabase:</strong> {erroSupabase}
           </div>
         )}
 
-        {/* MÉTRICAS PRINCIPAIS */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
-            <p className="text-xs font-bold text-slate-400 uppercase">Total de Peças</p>
+        {/* MÉTRICAS GERAIS OU DO CLIENTE */}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 print:grid-cols-4">
+          <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 print:border-slate-300">
+            <p className="text-xs font-bold text-slate-400 uppercase">
+              {clienteFiltro ? 'Peças do Cliente' : 'Total Geral de Peças'}
+            </p>
             <p className="text-2xl font-black text-slate-800 mt-1">{totalPecas}</p>
           </div>
-          <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
-            <p className="text-xs font-bold text-slate-400 uppercase">Clientes Cadastrados</p>
-            <p className="text-2xl font-black text-blue-600 mt-1">{clientes.length}</p>
+
+          <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 print:border-slate-300">
+            <p className="text-xs font-bold text-slate-400 uppercase">
+              {clienteFiltro ? 'Itens Cadastrados' : 'Clientes Cadastrados'}
+            </p>
+            <p className="text-2xl font-black text-blue-600 mt-1">
+              {clienteFiltro ? produtosFiltrados.length : clientes.length}
+            </p>
           </div>
-          <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
+
+          <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 print:border-slate-300">
             <p className="text-xs font-bold text-amber-600 uppercase">Estoque Baixo</p>
             <p className="text-2xl font-black text-amber-600 mt-1">{produtosBaixo.length} itens</p>
           </div>
-          <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
+
+          <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 print:border-slate-300">
             <p className="text-xs font-bold text-red-600 uppercase">Nível Crítico</p>
             <p className="text-2xl font-black text-red-600 mt-1">{produtosCritico.length} itens</p>
           </div>
         </div>
 
-        {/* PAINEL DE ALERTA DE CLIENTES */}
-        {clientesEmAlerta.length > 0 ? (
-          <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 shadow-sm">
-            <div className="flex items-center gap-2 text-amber-800 font-bold text-xs uppercase mb-2">
-              <span>⚠️</span>
-              <span>Clientes com Alerta de Reposição ({clientesEmAlerta.length}):</span>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              {clientesEmAlerta.map((c) => {
-                const prodsDoCliente = produtos.filter((p) => p.cliente_id === c.id);
-                const qtdAlertas = prodsDoCliente.filter(
-                  (p) => (Number(p.quantidade) || 0) <= (Number(p.estoque_minimo) || 10)
-                ).length;
+        {/* ALERTA GLOBAL DE CLIENTES */}
+        {!clienteFiltro && (
+          clientesEmAlerta.length > 0 ? (
+            <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 shadow-sm print:hidden">
+              <div className="flex items-center gap-2 text-amber-800 font-bold text-xs uppercase mb-2">
+                <span>⚠️</span>
+                <span>Clientes com Alerta de Reposição ({clientesEmAlerta.length}):</span>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {clientesEmAlerta.map((c) => {
+                  const prodsDoCliente = produtos.filter((p) => p.cliente_id === c.id);
+                  const qtdAlertas = prodsDoCliente.filter(
+                    (p) => (Number(p.quantidade) || 0) <= (Number(p.estoque_minimo) || 10)
+                  ).length;
 
-                return (
-                  <div
-                    key={c.id}
-                    className="bg-white border border-amber-300 px-3 py-1.5 rounded-lg text-xs font-bold text-amber-900 shadow-sm flex items-center gap-2"
-                  >
-                    <span>🏢 {c.nome || c.razao_social}</span>
-                    <span className="bg-amber-100 text-amber-800 px-2 py-0.5 rounded-full text-[10px]">
-                      {qtdAlertas} {qtdAlertas === 1 ? 'item baixo' : 'itens baixos'}
-                    </span>
-                  </div>
-                );
-              })}
+                  return (
+                    <button
+                      key={c.id}
+                      onClick={() => setClienteFiltro(c.id)}
+                      className="bg-white border border-amber-300 hover:border-amber-500 px-3 py-1.5 rounded-lg text-xs font-bold text-amber-900 shadow-sm flex items-center gap-2 transition-all cursor-pointer"
+                    >
+                      <span>🏢 {c.nome || c.razao_social}</span>
+                      <span className="bg-amber-100 text-amber-800 px-2 py-0.5 rounded-full text-[10px]">
+                        {qtdAlertas} {qtdAlertas === 1 ? 'item baixo' : 'itens baixos'}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
             </div>
-          </div>
-        ) : (
-          <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3 text-emerald-800 text-xs font-bold flex items-center gap-2">
-            <span>✅</span>
-            <span>Todos os clientes estão com níveis de estoque regulares.</span>
-          </div>
+          ) : (
+            <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3 text-emerald-800 text-xs font-bold flex items-center gap-2 print:hidden">
+              <span>✅</span>
+              <span>Todos os clientes estão com níveis de estoque regulares.</span>
+            </div>
+          )
         )}
 
-        {/* NAVEGAÇÃO DE ABAS */}
-        <div className="bg-white p-1.5 rounded-xl shadow-sm border border-slate-200 flex flex-wrap gap-2">
+        {/* NAVEGAÇÃO DE ABAS (OCULTA NA IMPRESSÃO) */}
+        <div className="bg-white p-1.5 rounded-xl shadow-sm border border-slate-200 flex flex-wrap gap-2 print:hidden">
           <button
             onClick={() => setAbaAtiva('movimentacao')}
             className={`px-4 py-2 rounded-lg text-xs font-bold transition-all ${
@@ -350,6 +435,14 @@ export default function PainelAdmin() {
             }`}
           >
             📦 Lançar Entrada/Saída
+          </button>
+          <button
+            onClick={() => setAbaAtiva('relatorio')}
+            className={`px-4 py-2 rounded-lg text-xs font-bold transition-all ${
+              abaAtiva === 'relatorio' ? 'bg-blue-600 text-white shadow' : 'text-slate-600 hover:bg-slate-100'
+            }`}
+          >
+            📊 Relatório & Dashboard
           </button>
           <button
             onClick={() => setAbaAtiva('historico')}
@@ -387,7 +480,7 @@ export default function PainelAdmin() {
 
         {mensagem.texto && (
           <div
-            className={`p-4 rounded-xl text-xs font-bold border ${
+            className={`p-4 rounded-xl text-xs font-bold border print:hidden ${
               mensagem.tipo === 'erro' ? 'bg-red-50 text-red-700 border-red-200' : 'bg-green-50 text-green-700 border-green-200'
             }`}
           >
@@ -398,12 +491,19 @@ export default function PainelAdmin() {
         {/* ABA 1: MOVIMENTAÇÃO */}
         {abaAtiva === 'movimentacao' && (
           <div className="space-y-6">
-            <form onSubmit={handleConfirmarMovimentacao} className="bg-white rounded-xl shadow-sm p-6 border border-slate-200">
-              <h3 className="text-base font-bold text-slate-800 mb-4">Registrar Entrada / Saída de Estoque</h3>
+            <form onSubmit={handleConfirmarMovimentacao} className="bg-white rounded-xl shadow-sm p-6 border border-slate-200 print:hidden">
+              <h3 className="text-base font-bold text-slate-800 mb-4">
+                Registrar Entrada / Saída de Estoque
+                {clienteFiltro && (
+                  <span className="text-blue-600 text-xs ml-2 font-normal">
+                    (Exibindo itens de {clienteAtualObjeto?.nome})
+                  </span>
+                )}
+              </h3>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
                 <div>
                   <label className="block text-xs font-bold text-slate-600 mb-1">
-                    Selecione o Uniforme / Item * ({produtos.length} cadastrados)
+                    Selecione o Uniforme / Item * ({produtosFiltrados.length} disponíveis)
                   </label>
                   <select
                     value={movItem}
@@ -417,11 +517,11 @@ export default function PainelAdmin() {
                     required
                   >
                     <option value="">
-                      {produtos.length === 0
+                      {produtosFiltrados.length === 0
                         ? '-- Nenhum produto encontrado --'
-                        : `-- Escolha um Item (${produtos.length} disponíveis) --`}
+                        : `-- Escolha um Item (${produtosFiltrados.length} disponíveis) --`}
                     </option>
-                    {produtos.map((p, idx) => {
+                    {produtosFiltrados.map((p, idx) => {
                       const idVal = p.id || p.codigo || idx;
                       const nomeExibicao = p.descricao || p.nome || `Produto #${idx + 1}`;
                       const codExibicao = p.codigo ? `(${p.codigo})` : '';
@@ -456,7 +556,7 @@ export default function PainelAdmin() {
                   <select
                     value={movTipo}
                     onChange={(e) => setMovTipo(e.target.value as 'ENTRADA' | 'SAIDA')}
-                    className="w-full p-2.5 border rounded-lg text-xs bg-white font-bold"
+                    className="w-full p-2.5 border rounded-lg text-xs bg-bold"
                   >
                     <option value="SAIDA">🔴 Saída (Retirada / Entrega)</option>
                     <option value="ENTRADA">🟢 Entrada (Lançamento / Compra)</option>
@@ -493,27 +593,20 @@ export default function PainelAdmin() {
               </button>
             </form>
 
-            {/* TABELA POSIÇÃO GERAL DO ESTOQUE */}
+            {/* TABELA POSIÇÃO DO ESTOQUE */}
             <div className="bg-white rounded-xl shadow-sm p-6 border border-slate-200">
-              <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-4">
-                <h3 className="text-base font-bold text-slate-800">Posição Geral do Estoque</h3>
-                
-                {/* Filtro de Cliente */}
-                <div className="flex items-center gap-2">
-                  <span className="text-xs text-slate-500 font-medium">Filtrar Cliente:</span>
-                  <select
-                    value={filtroClienteEstoque}
-                    onChange={(e) => setFiltroClienteEstoque(e.target.value)}
-                    className="p-1.5 border rounded-lg text-xs bg-white font-medium text-slate-800"
+              <div className="flex justify-between items-center mb-4">
+                <h3 className="text-base font-bold text-slate-800">
+                  Posição de Estoque {clienteFiltro ? `— ${clienteAtualObjeto?.nome}` : 'Geral'}
+                </h3>
+                {clienteFiltro && (
+                  <button
+                    onClick={() => setClienteFiltro('')}
+                    className="text-xs text-blue-600 font-bold hover:underline print:hidden"
                   >
-                    <option value="">-- Todos os Clientes --</option>
-                    {clientes.map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.nome || c.razao_social}
-                      </option>
-                    ))}
-                  </select>
-                </div>
+                    ✖ Limpar filtro (Ver todos)
+                  </button>
+                )}
               </div>
 
               <div className="overflow-x-auto">
@@ -528,14 +621,14 @@ export default function PainelAdmin() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 text-xs">
-                    {produtosExibidos.length === 0 ? (
+                    {produtosFiltrados.length === 0 ? (
                       <tr>
                         <td colSpan={5} className="p-4 text-center text-slate-400 font-medium">
-                          Nenhum produto encontrado para o filtro selecionado.
+                          Nenhum produto cadastrado para este cliente.
                         </td>
                       </tr>
                     ) : (
-                      produtosExibidos.map((item, idx) => {
+                      produtosFiltrados.map((item, idx) => {
                         const qtd = Number(item.quantidade) || 0;
                         const min = Number(item.estoque_minimo) || 10;
                         const crit = Number(item.minimo_critico) || 3;
@@ -581,10 +674,161 @@ export default function PainelAdmin() {
           </div>
         )}
 
-        {/* ABA 2: HISTÓRICO DE MOVIMENTAÇÕES */}
+        {/* ABA 2: RELATÓRIO & DASHBOARD ANALÍTICO */}
+        {abaAtiva === 'relatorio' && (
+          <div className="space-y-6">
+            <div className="bg-white rounded-xl shadow-sm p-6 border border-slate-200 print:shadow-none print:border-none">
+              
+              {/* CABEÇALHO EXECUTIVO DO RELATÓRIO */}
+              <div className="flex justify-between items-start border-b pb-4 mb-6">
+                <div>
+                  <h2 className="text-xl font-black text-slate-900">
+                    RELATÓRIO DIAGNÓSTICO DE ESTOQUE DE UNIFORMES
+                  </h2>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    Empresa: <strong className="text-slate-800">{clienteFiltro ? clienteAtualObjeto?.nome : 'Todas as Empresas (Consolidado)'}</strong>
+                    {clienteAtualObjeto?.cnpj && ` • CNPJ: ${clienteAtualObjeto.cnpj}`}
+                  </p>
+                  <p className="text-xs text-slate-400 mt-0.5">
+                    Data da Emissão: {new Date().toLocaleDateString('pt-BR')} às {new Date().toLocaleTimeString('pt-BR')}
+                  </p>
+                </div>
+
+                <button
+                  onClick={() => window.print()}
+                  className="px-4 py-2 bg-emerald-600 text-white text-xs font-bold rounded-lg hover:bg-emerald-700 shadow print:hidden"
+                >
+                  🖨️ Imprimir / Salvar PDF
+                </button>
+              </div>
+
+              {/* PAINEL DASHBOARD COMPLETO */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+                <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
+                  <span className="text-[10px] font-bold text-slate-400 uppercase">Índice de Saúde do Estoque</span>
+                  <div className="flex items-center justify-between mt-2">
+                    <span className="text-3xl font-black text-slate-800">{percentSaudavel}%</span>
+                    <span className={`text-xs font-bold px-2.5 py-1 rounded ${
+                      percentSaudavel >= 80 ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'
+                    }`}>
+                      {percentSaudavel >= 80 ? 'Excelente' : 'Atenção Necessária'}
+                    </span>
+                  </div>
+                  <div className="w-full bg-slate-200 h-2 rounded-full mt-3 overflow-hidden">
+                    <div
+                      className={`h-full ${percentSaudavel >= 80 ? 'bg-emerald-500' : 'bg-amber-500'}`}
+                      style={{ width: `${percentSaudavel}%` }}
+                    />
+                  </div>
+                </div>
+
+                <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
+                  <span className="text-[10px] font-bold text-slate-400 uppercase">Resumo da Movimentação Recente</span>
+                  <div className="grid grid-cols-2 gap-2 mt-2">
+                    <div>
+                      <span className="text-[10px] font-bold text-emerald-600 uppercase block">Entradas</span>
+                      <span className="text-lg font-bold text-slate-800">+{totalEntradas} un</span>
+                    </div>
+                    <div>
+                      <span className="text-[10px] font-bold text-red-600 uppercase block">Saídas</span>
+                      <span className="text-lg font-bold text-slate-800">-{totalSaidas} un</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
+                  <span className="text-[10px] font-bold text-slate-400 uppercase">Itens Requerendo Ação URGENTE</span>
+                  <div className="mt-2">
+                    <span className="text-3xl font-black text-red-600">
+                      {produtosCritico.length + produtosBaixo.length}
+                    </span>
+                    <span className="text-xs font-bold text-slate-500 ml-2">
+                      ({produtosCritico.length} críticos / {produtosBaixo.length} baixos)
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* PLANO DE AÇÃO / REPOSIÇÃO RECOMENDADA */}
+              <div className="mb-6">
+                <h3 className="text-sm font-bold text-slate-800 uppercase mb-3">
+                  📋 Sugestão de Reposição / Ordem de Produção
+                </h3>
+
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left border-collapse border border-slate-200">
+                    <thead className="bg-slate-100 text-[10px] font-bold text-slate-600 uppercase">
+                      <tr>
+                        <th className="p-2 border">CÓDIGO</th>
+                        <th className="p-2 border">UNIFORME</th>
+                        <th className="p-2 border">ESTOQUE ATUAL</th>
+                        <th className="p-2 border">MÍNIMO SEGURO</th>
+                        <th className="p-2 border">STATUS</th>
+                        <th className="p-2 border">SUGESTÃO DE FABRICAÇÃO</th>
+                      </tr>
+                    </thead>
+                    <tbody className="text-xs font-medium">
+                      {produtosFiltrados.map((p, idx) => {
+                        const qtd = Number(p.quantidade) || 0;
+                        const min = Number(p.estoque_minimo) || 10;
+                        const crit = Number(p.minimo_critico) || 3;
+                        const reposicaoSugerida = Math.max(0, min * 2 - qtd);
+
+                        let statusText = 'OK';
+                        let badgeColor = 'bg-emerald-100 text-emerald-800';
+
+                        if (qtd <= crit) {
+                          statusText = 'CRÍTICO';
+                          badgeColor = 'bg-red-100 text-red-800 font-bold';
+                        } else if (qtd <= min) {
+                          statusText = 'BAIXO';
+                          badgeColor = 'bg-amber-100 text-amber-800 font-bold';
+                        }
+
+                        return (
+                          <tr key={p.id || idx} className="border-b">
+                            <td className="p-2 border font-mono font-bold text-blue-600">{p.codigo || '—'}</td>
+                            <td className="p-2 border font-bold text-slate-800">{p.descricao || p.nome}</td>
+                            <td className="p-2 border font-bold">{qtd} un</td>
+                            <td className="p-2 border text-slate-500">{min} un</td>
+                            <td className="p-2 border">
+                              <span className={`text-[10px] px-2 py-0.5 rounded ${badgeColor}`}>
+                                {statusText}
+                              </span>
+                            </td>
+                            <td className="p-2 border font-bold text-indigo-700">
+                              {reposicaoSugerida > 0 ? `+${reposicaoSugerida} un (Sugerido)` : 'Sem necessidade'}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              {/* ASSINATURAS / RODAPÉ DO RELATÓRIO */}
+              <div className="mt-12 pt-6 border-t grid grid-cols-2 gap-8 text-center print:block">
+                <div>
+                  <div className="border-b border-slate-400 w-48 mx-auto mb-1"></div>
+                  <p className="text-[10px] font-bold text-slate-600 uppercase">Ação Uniformes • Gestão de Estoque</p>
+                </div>
+                <div>
+                  <div className="border-b border-slate-400 w-48 mx-auto mb-1"></div>
+                  <p className="text-[10px] font-bold text-slate-600 uppercase">Recebido e De Acordo (Cliente)</p>
+                </div>
+              </div>
+
+            </div>
+          </div>
+        )}
+
+        {/* ABA 3: HISTÓRICO */}
         {abaAtiva === 'historico' && (
           <div className="bg-white rounded-xl shadow-sm p-6 border border-slate-200">
-            <h3 className="text-base font-bold text-slate-800 mb-4">Extrato de Movimentações Recentes</h3>
+            <h3 className="text-base font-bold text-slate-800 mb-4">
+              Extrato de Movimentações {clienteFiltro ? `— ${clienteAtualObjeto?.nome}` : 'Geral'}
+            </h3>
             <div className="overflow-x-auto">
               <table className="w-full text-left border-collapse">
                 <thead>
@@ -598,57 +842,49 @@ export default function PainelAdmin() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 text-xs">
-                  {historico.length === 0 ? (
-                    <tr>
-                      <td colSpan={6} className="p-4 text-center text-slate-400 font-medium">
-                        Nenhuma movimentação registrada até o momento.
-                      </td>
-                    </tr>
-                  ) : (
-                    historico.map((h, idx) => {
-                      const prodRel = produtos.find((p) => p.id === h.produto_id);
-                      const cliRel = clientes.find((c) => c.id === h.cliente_id);
-                      const dataFmt = h.created_at
-                        ? new Date(h.created_at).toLocaleString('pt-BR')
-                        : '—';
+                  {historicoFiltrado.map((h, idx) => {
+                    const prodRel = produtos.find((p) => p.id === h.produto_id);
+                    const cliRel = clientes.find((c) => c.id === h.cliente_id);
+                    const dataFmt = h.created_at
+                      ? new Date(h.created_at).toLocaleString('pt-BR')
+                      : '—';
 
-                      const isEntrada = h.tipo_movimento === 'ENTRADA';
+                    const isEntrada = h.tipo_movimento === 'ENTRADA';
 
-                      return (
-                        <tr key={h.id || idx}>
-                          <td className="p-3 text-slate-500 font-medium">{dataFmt}</td>
-                          <td className="p-3 font-bold">
-                            {isEntrada ? (
-                              <span className="bg-emerald-100 text-emerald-800 text-[10px] px-2 py-0.5 rounded">
-                                🟢 ENTRADA
-                              </span>
-                            ) : (
-                              <span className="bg-red-100 text-red-800 text-[10px] px-2 py-0.5 rounded">
-                                🔴 SAÍDA
-                              </span>
-                            )}
-                          </td>
-                          <td className="p-3 font-bold text-slate-800">
-                            {prodRel ? prodRel.descricao || prodRel.nome : 'Produto'}
-                          </td>
-                          <td className="p-3 text-slate-600">
-                            {cliRel ? cliRel.nome : '—'}
-                          </td>
-                          <td className="p-3 font-bold text-slate-800">
-                            {isEntrada ? `+${h.quantidade}` : `-${h.quantidade}`} un
-                          </td>
-                          <td className="p-3 text-slate-500 italic">{h.observacao || '—'}</td>
-                        </tr>
-                      );
-                    })
-                  )}
+                    return (
+                      <tr key={h.id || idx}>
+                        <td className="p-3 text-slate-500 font-medium">{dataFmt}</td>
+                        <td className="p-3 font-bold">
+                          {isEntrada ? (
+                            <span className="bg-emerald-100 text-emerald-800 text-[10px] px-2 py-0.5 rounded">
+                              🟢 ENTRADA
+                            </span>
+                          ) : (
+                            <span className="bg-red-100 text-red-800 text-[10px] px-2 py-0.5 rounded">
+                              🔴 SAÍDA
+                            </span>
+                          )}
+                        </td>
+                        <td className="p-3 font-bold text-slate-800">
+                          {prodRel ? prodRel.descricao || prodRel.nome : 'Produto'}
+                        </td>
+                        <td className="p-3 text-slate-600">
+                          {cliRel ? cliRel.nome : '—'}
+                        </td>
+                        <td className="p-3 font-bold text-slate-800">
+                          {isEntrada ? `+${h.quantidade}` : `-${h.quantidade}`} un
+                        </td>
+                        <td className="p-3 text-slate-500 italic">{h.observacao || '—'}</td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
           </div>
         )}
 
-        {/* ABA 3: CADASTRAR UNIFORME */}
+        {/* ABA 4: CADASTRAR UNIFORME */}
         {abaAtiva === 'uniforme' && (
           <form onSubmit={handleCadastrarUniforme} className="bg-white rounded-xl shadow-sm p-6 border border-slate-200">
             <h3 className="text-base font-bold text-slate-800 mb-4">Cadastrar Novo Uniforme / Produto</h3>
@@ -727,7 +963,7 @@ export default function PainelAdmin() {
           </form>
         )}
 
-        {/* ABA 4: CADASTRAR CLIENTE */}
+        {/* ABA 5: CADASTRAR CLIENTE */}
         {abaAtiva === 'cliente' && (
           <form onSubmit={handleCadastrarCliente} className="bg-white rounded-xl shadow-sm p-6 border border-slate-200">
             <h3 className="text-base font-bold text-slate-800 mb-4">Cadastrar Novo Cliente / Empresa</h3>
@@ -761,7 +997,7 @@ export default function PainelAdmin() {
           </form>
         )}
 
-        {/* ABA 5: CADASTRAR USUÁRIO */}
+        {/* ABA 6: CADASTRAR USUÁRIO */}
         {abaAtiva === 'usuario' && (
           <form onSubmit={handleCadastrarUsuario} className="bg-white rounded-xl shadow-sm p-6 border border-slate-200">
             <h3 className="text-base font-bold text-slate-800 mb-4">Cadastrar Usuário / Operador</h3>
