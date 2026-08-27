@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
-
+import { ModalAtribuirProduto } from '@/components/ModalAtribuirProduto';
 export default function PainelAdmin() {
   const [abaAtiva, setAbaAtiva] = useState<
     'movimentacao' | 'historico' | 'uniforme' | 'cliente' | 'usuario' | 'relatorio'
@@ -12,6 +12,7 @@ export default function PainelAdmin() {
   const [produtos, setProdutos] = useState<any[]>([]);
   const [usuarios, setUsuarios] = useState<any[]>([]);
   const [historico, setHistorico] = useState<any[]>([]);
+  const [isModalAtribuirOpen, setIsModalAtribuirOpen] = useState(false);
 
   // FILTRO PRINCIPAL DE CLIENTE & SLICERS DO DASHBOARD
   const [clienteFiltro, setClienteFiltro] = useState<string>('');
@@ -432,6 +433,15 @@ export default function PainelAdmin() {
     <div className="min-h-screen bg-slate-50 p-4 md:p-6 print:p-0 print:bg-white">
       <div className="max-w-6xl mx-auto space-y-6">
         
+        <div className="flex justify-end my-2">
+  <button 
+    type="button"
+    onClick={() => setIsModalAtribuirOpen(true)}
+    className="bg-blue-600 text-white px-4 py-2 rounded shadow hover:bg-blue-700 text-sm font-medium"
+  >
+    + Vincular Item ao Cliente
+  </button>
+</div>
         {/* CABEÇALHO ADMIN */}
         <div className="bg-white rounded-xl p-5 shadow-sm border border-slate-200 flex flex-col md:flex-row justify-between items-start md:items-center gap-4 print:border-none print:shadow-none print:p-0 print:mb-4">
           <div>
@@ -1330,7 +1340,14 @@ export default function PainelAdmin() {
             </button>
           </form>
         )}
-
+{isModalAtribuirOpen && (
+  <ModalAtribuirProduto
+    clientes={clientes}
+    produtosCatalogo={produtos}
+    onSuccess={() => carregarDados()}
+    onClose={() => setIsModalAtribuirOpen(false)}
+  />
+)}
       </div>
     </div>
   );
