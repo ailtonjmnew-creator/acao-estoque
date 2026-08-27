@@ -8,23 +8,21 @@ export default function PainelAdmin() {
     'movimentacao' | 'historico' | 'uniforme' | 'cliente' | 'usuario' | 'relatorio'
   >('movimentacao');
 
-  // DADOS DO SUPABASE
   const [clientes, setClientes] = useState<any[]>([]);
   const [produtos, setProdutos] = useState<any[]>([]);
   const [usuarios, setUsuarios] = useState<any[]>([]);
   const [historico, setHistorico] = useState<any[]>([]);
 
-  // FILTROS DE TELA & DASHBOARD
+  // FILTRO PRINCIPAL DE CLIENTE & SLICERS DO DASHBOARD
   const [clienteFiltro, setClienteFiltro] = useState<string>('');
   const [dataInicio, setDataInicio] = useState<string>('');
   const [dataFim, setDataFim] = useState<string>('');
   const [statusFiltro, setStatusFiltro] = useState<string>('todos');
 
-  // ESTADOS DE FEEDBACK
   const [erroSupabase, setErroSupabase] = useState<string | null>(null);
   const [mensagem, setMensagem] = useState({ tipo: '', texto: '' });
 
-  // FORMULÁRIO: MOVIMENTAÇÃO / ATRIBUIÇÃO
+  // Formulário Movimentação & Atribuição de Cliente
   const [movItem, setMovItem] = useState('');
   const [movCliente, setMovCliente] = useState('');
   const [movTipo, setMovTipo] = useState<'ENTRADA' | 'SAIDA'>('ENTRADA');
@@ -33,16 +31,23 @@ export default function PainelAdmin() {
   const [movMinimoCritico, setMovMinimoCritico] = useState<number | string>(3);
   const [movObs, setMovObs] = useState('');
 
-  // FORMULÁRIOS DE CADASTRO
-  const [novoUniforme, setNovoUniforme] = useState({ descricao: '', codigo: '', quantidade: 0 });
-  const [novoCliente, setNovoCliente] = useState({ nome: '', cnpj: '' });
-  const [novoUsuario, setNovoUsuario] = useState({ nome: '', email: '', perfil: 'operador', cliente_id: '' });
+  // Formulário Novo Uniforme (Catálogo Geral)
+  const [novoUniforme, setNovoUniforme] = useState({
+    descricao: '',
+    codigo: '',
+    quantidade: 0
+  });
 
-  // FUNÇÕES AUXILIARES DE TRATAMENTO DE CAMPOS DO BANCO
-  const getQtd = (p: any) => Number(p?.quantidade ?? p?.qtd ?? p?.estoque ?? p?.saldo ?? 0);
-  const getNome = (p: any) => p?.descricao || p?.nome || p?.titulo || 'Uniforme Sem Nome';
-  const getMin = (p: any) => Number(p?.estoque_minimo ?? p?.minimo ?? 10);
-  const getCrit = (p: any) => Number(p?.minimo_critico ?? p?.critico ?? 3);
+  // Formulário Novo Cliente
+  const [novoCliente, setNovoCliente] = useState({ nome: '', cnpj: '' });
+
+  // Formulário Novo Usuário
+  const [novoUsuario, setNovoUsuario] = useState({
+    nome: '',
+    email: '',
+    perfil: 'operador',
+    cliente_id: ''
+  });
 
   useEffect(() => {
     carregarDados();
@@ -56,11 +61,11 @@ export default function PainelAdmin() {
 
   useEffect(() => {
     if (movItem) {
-      const prod = produtos.find((p) => String(p.id) === String(movItem) || p.codigo === movItem);
+      const prod = produtos.find((p) => p.id === movItem || p.codigo === movItem);
       if (prod) {
         if (prod.cliente_id) setMovCliente(prod.cliente_id);
-        setMovEstoqueMinimo(getMin(prod));
-        setMovMinimoCritico(getCrit(prod));
+        if (prod.estoque_minimo !== undefined) setMovEstoqueMinimo(prod.estoque_minimo);
+        if (prod.minimo_critico !== undefined) setMovMinimoCritico(prod.minimo_critico);
       }
     }
   }, [movItem, produtos]);
@@ -69,12 +74,16 @@ export default function PainelAdmin() {
     setErroSupabase(null);
     try {
       const { data: dClientes, error: errC } = await supabase.from('clientes').select('*');
-      if (errC) setErroSupabase(`Clientes: ${errC.message}`);
-      else if (dClientes) setClientes(dClientes);
+      if (errC) console.error('Erro Clientes:', errC);
+      if (dClientes) setClientes(dClientes);
 
       const { data: dProdutos, error: errP } = await supabase.from('produtos').select('*');
-      if (errP) setErroSupabase(`Produtos: ${errP.message}`);
-      else if (dProdutos) setProdutos(dProdutos);
+      if (errP) {
+        console.error('Erro Produtos:', errP);
+        setErroSupabase(`Erro ao buscar produtos: ${errP.message}`);
+      } else if (dProdutos) {
+        setProdutos(dProdutos);
+      }
 
       const { data: dUsuarios, error: errU } = await supabase.from('usuarios').select('*');
       if (errU) console.error('Erro Usuários:', errU);
@@ -84,11 +93,12 @@ export default function PainelAdmin() {
         .from('estoque')
         .select('*')
         .order('created_at', { ascending: false })
-        .limit(500);
+        .limit(300);
 
       if (errH) console.error('Erro Histórico:', errH);
       if (dHistorico) setHistorico(dHistorico);
     } catch (err: any) {
+      console.error('Erro geral:', err);
       setErroSupabase(`Falha de conexão: ${err?.message || 'Erro desconhecido'}`);
     }
   }
@@ -100,37 +110,27 @@ export default function PainelAdmin() {
 
   const gerarCodigoAuto = () => `UNI-${Math.floor(1000 + Math.random() * 9000)}`;
 
-  // REGRAS E CÁLCULOS DOS FILTROS E DASHBOARD
-  const clienteAtualObjeto = clientes.find((c) => String(c.id) === String(clienteFiltro));
-
-  const baseProdutosParaMetrica = clienteFiltro
-    ? produtos.filter((p) => String(p.cliente_id) === String(clienteFiltro))
+  // FILTRAGEM DINÂMICA
+  let produtosFiltrados = clienteFiltro
+    ? produtos.filter((p) => p.cliente_id === clienteFiltro)
     : produtos;
 
-  let produtosFiltrados = baseProdutosParaMetrica;
   if (statusFiltro === 'critico') {
-    produtosFiltrados = produtosFiltrados.filter((p) => getQtd(p) <= getCrit(p));
+    produtosFiltrados = produtosFiltrados.filter(
+      (p) => (Number(p.quantidade) || 0) <= (Number(p.minimo_critico) || 3)
+    );
   } else if (statusFiltro === 'baixo') {
-    produtosFiltrados = produtosFiltrados.filter((p) => getQtd(p) <= getMin(p));
+    produtosFiltrados = produtosFiltrados.filter(
+      (p) => (Number(p.quantidade) || 0) <= (Number(p.estoque_minimo) || 10)
+    );
   } else if (statusFiltro === 'normal') {
-    produtosFiltrados = produtosFiltrados.filter((p) => getQtd(p) > getMin(p));
+    produtosFiltrados = produtosFiltrados.filter(
+      (p) => (Number(p.quantidade) || 0) > (Number(p.estoque_minimo) || 10)
+    );
   }
 
-  const totalPecas = baseProdutosParaMetrica.reduce((acc, item) => acc + getQtd(item), 0);
-  const produtosOk = baseProdutosParaMetrica.filter((p) => getQtd(p) > getMin(p));
-  const produtosBaixo = baseProdutosParaMetrica.filter((p) => getQtd(p) <= getMin(p));
-  const produtosCritico = baseProdutosParaMetrica.filter((p) => getQtd(p) <= getCrit(p));
-
-  // ALERTAS POR CLIENTE PARA O BANNER
-  const clientesComAlerta = clientes.map((cli) => {
-    const prodsDoCliente = produtos.filter((p) => String(p.cliente_id) === String(cli.id));
-    const qtdBaixo = prodsDoCliente.filter((p) => getQtd(p) <= getMin(p)).length;
-    return { cliente: cli, qtdBaixo };
-  }).filter((c) => c.qtdBaixo > 0);
-
-  // HISTÓRICO FILTRADO POR CLIENTE E DATAS
   let historicoFiltrado = clienteFiltro
-    ? historico.filter((h) => String(h.cliente_id) === String(clienteFiltro))
+    ? historico.filter((h) => h.cliente_id === clienteFiltro)
     : historico;
 
   if (dataInicio) {
@@ -144,7 +144,28 @@ export default function PainelAdmin() {
     );
   }
 
-  // MÉTRICAS DO RELATÓRIO
+  const clienteAtualObjeto = clientes.find((c) => c.id === clienteFiltro);
+
+  // CÁLCULOS DAS MÉTRICAS
+  const baseProdutosParaMetrica = clienteFiltro
+    ? produtos.filter((p) => p.cliente_id === clienteFiltro)
+    : produtos;
+
+  const totalPecas = baseProdutosParaMetrica.reduce((acc, item) => acc + (Number(item.quantidade) || 0), 0);
+
+  const produtosCritico = baseProdutosParaMetrica.filter(
+    (p) => (Number(p.quantidade) || 0) <= (Number(p.minimo_critico) || 3)
+  );
+
+  const produtosBaixo = baseProdutosParaMetrica.filter(
+    (p) => (Number(p.quantidade) || 0) <= (Number(p.estoque_minimo) || 10)
+  );
+
+  const produtosOk = baseProdutosParaMetrica.filter(
+    (p) => (Number(p.quantidade) || 0) > (Number(p.estoque_minimo) || 10)
+  );
+
+  // MOVIMENTAÇÕES ACUMULADAS
   const totalEntradas = historicoFiltrado
     .filter((h) => h.tipo_movimento === 'ENTRADA')
     .reduce((acc, h) => acc + (Number(h.quantidade) || 0), 0);
@@ -153,34 +174,53 @@ export default function PainelAdmin() {
     .filter((h) => h.tipo_movimento === 'SAIDA')
     .reduce((acc, h) => acc + (Number(h.quantidade) || 0), 0);
 
-  // AGRUPAMENTO DOS MAIS SOLICITADOS (TOP 5 CONSUMO)
-  const consumoMap: { [key: string]: { nome: string; qtd: number } } = {};
+  // CÁLCULO TOP 5 MAIS SOLICITADOS
+  const consumoPorProduto: { [key: string]: { nome: string; qtd: number } } = {};
   historicoFiltrado
     .filter((h) => h.tipo_movimento === 'SAIDA')
     .forEach((h) => {
-      const prod = produtos.find((p) => String(p.id) === String(h.produto_id));
-      const nome = prod ? getNome(prod) : 'Produto Desconhecido';
-      if (!consumoMap[nome]) {
-        consumoMap[nome] = { nome, qtd: 0 };
+      const prod = produtos.find((p) => p.id === h.produto_id);
+      const nome = prod ? prod.descricao || prod.nome : 'Produto';
+      const key = h.produto_id || nome;
+      if (!consumoPorProduto[key]) {
+        consumoPorProduto[key] = { nome, qtd: 0 };
       }
-      consumoMap[nome].qtd += Number(h.quantidade) || 0;
+      consumoPorProduto[key].qtd += Number(h.quantidade) || 0;
     });
 
-  const topConsumidos = Object.values(consumoMap)
+  const topConsumidos = Object.values(consumoPorProduto)
     .sort((a, b) => b.qtd - a.qtd)
     .slice(0, 5);
 
-  const maxConsumo = topConsumidos.length > 0 ? Math.max(...topConsumidos.map((i) => i.qtd)) : 1;
+  const maxConsumo = topConsumidos.length > 0 ? topConsumidos[0].qtd : 1;
 
-  // HANDLERS DE CADASTRO E MOVIMENTAÇÃO
+  // ALERTAS DE CLIENTES GLOBAIS
+  const clienteIdsComAlerta = Array.from(
+    new Set(
+      produtos
+        .filter((p) => (Number(p.quantidade) || 0) <= (Number(p.estoque_minimo) || 10) && p.cliente_id)
+        .map((p) => p.cliente_id)
+    )
+  );
+  const clientesEmAlerta = clientes.filter((c) => clienteIdsComAlerta.includes(c.id));
+
+  // DIVISÃO DE PRODUTOS PARA O DROPDOWN: CATÁLOGO GERAL FICA SEMPRE DISPONÍVEL
+  const produtosGerais = produtos.filter((p) => !p.cliente_id);
+  const produtosDeClientes = clienteFiltro
+    ? produtos.filter((p) => p.cliente_id === clienteFiltro)
+    : produtos.filter((p) => p.cliente_id);
+
+  // HANDLERS
   const handleCadastrarUniforme = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!novoUniforme.descricao) return;
 
+    const codigoFinal = novoUniforme.codigo.trim() || gerarCodigoAuto();
+
     const payload = {
       descricao: novoUniforme.descricao,
       nome: novoUniforme.descricao,
-      codigo: novoUniforme.codigo.trim() || gerarCodigoAuto(),
+      codigo: codigoFinal,
       quantidade: Number(novoUniforme.quantidade) || 0,
       cliente_id: null,
       estoque_minimo: 10,
@@ -188,10 +228,11 @@ export default function PainelAdmin() {
     };
 
     const { error } = await supabase.from('produtos').insert([payload]);
+
     if (error) {
-      mostrarAlerta(`Erro: ${error.message}`, 'erro');
+      mostrarAlerta(`Erro ao cadastrar uniforme: ${error.message}`, 'erro');
     } else {
-      mostrarAlerta(`Modelo "${novoUniforme.descricao}" cadastrado no Catálogo Geral!`);
+      mostrarAlerta(`Uniforme "${novoUniforme.descricao}" adicionado ao Catálogo Geral!`);
       setNovoUniforme({ descricao: '', codigo: '', quantidade: 0 });
       await carregarDados();
       setAbaAtiva('movimentacao');
@@ -204,7 +245,7 @@ export default function PainelAdmin() {
 
     const { error } = await supabase.from('clientes').insert([novoCliente]);
     if (error) {
-      mostrarAlerta(`Erro: ${error.message}`, 'erro');
+      mostrarAlerta(`Erro ao cadastrar cliente: ${error.message}`, 'erro');
     } else {
       mostrarAlerta('Empresa cadastrada com sucesso!');
       setNovoCliente({ nome: '', cnpj: '' });
@@ -234,65 +275,77 @@ export default function PainelAdmin() {
     }
   };
 
+  // MOVIMENTAÇÃO E ATRIBUIÇÃO MULTI-CLIENTE
   const handleConfirmarMovimentacao = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!movItem) {
-      mostrarAlerta('Selecione um uniforme do catálogo.', 'erro');
+      mostrarAlerta('Selecione um uniforme da lista.', 'erro');
       return;
     }
 
-    const prodSelecionado = produtos.find((p) => String(p.id) === String(movItem) || p.codigo === movItem);
+    const prodSelecionado = produtos.find((p) => p.id === movItem || p.codigo === movItem);
     if (!prodSelecionado) {
-      mostrarAlerta('Produto não encontrado.', 'erro');
+      mostrarAlerta('Produto não encontrado no banco.', 'erro');
       return;
     }
 
     const qtdMovida = Number(movQtd) || 0;
+
+    if (movTipo === 'SAIDA' && qtdMovida <= 0) {
+      mostrarAlerta('Para registrar uma Saída, a quantidade deve ser maior que zero.', 'erro');
+      return;
+    }
+
     const clienteDestinoId = movCliente || prodSelecionado.cliente_id;
 
     if (!clienteDestinoId) {
-      mostrarAlerta('Selecione um cliente para vincular esta movimentação.', 'erro');
+      mostrarAlerta('Selecione um cliente para atribuir ou movimentar este item.', 'erro');
       return;
     }
 
     let produtoAlvoId = prodSelecionado.id;
-    let novaQuantidade = getQtd(prodSelecionado);
+    let novaQuantidade = Number(prodSelecionado.quantidade) || 0;
     let mensagemSucesso = '';
 
-    // Se o item for do Catálogo Geral (cliente_id nulo), vincula ou atualiza a cópia do cliente
+    // SE O ITEM VEM DO CATÁLOGO GERAL (SEM CLIENTE_ID) E FOI ESCOLHIDO UM CLIENTE:
     if (!prodSelecionado.cliente_id && movCliente) {
-      const nomeItem = getNome(prodSelecionado);
+      const nomeItem = prodSelecionado.descricao || prodSelecionado.nome;
+
+      // Verifica se o cliente JÁ possui uma instância deste modelo cadastrada
       const itemExistenteDoCliente = produtos.find(
         (p) =>
-          String(p.cliente_id) === String(movCliente) &&
-          (p.codigo === prodSelecionado.codigo || getNome(p).trim().toLowerCase() === nomeItem.trim().toLowerCase())
+          p.cliente_id === movCliente &&
+          (p.codigo === prodSelecionado.codigo ||
+            (p.descricao || p.nome || '').trim().toLowerCase() === nomeItem.trim().toLowerCase())
       );
 
       if (itemExistenteDoCliente) {
+        // Já existe o item vinculado ao cliente: atualiza o saldo
         produtoAlvoId = itemExistenteDoCliente.id;
-        const saldoAtual = getQtd(itemExistenteDoCliente);
+        const saldoAtual = Number(itemExistenteDoCliente.quantidade) || 0;
         novaQuantidade = movTipo === 'SAIDA' ? Math.max(0, saldoAtual - qtdMovida) : saldoAtual + qtdMovida;
 
         const { error: errUpdate } = await supabase
           .from('produtos')
           .update({
             quantidade: novaQuantidade,
-            estoque_minimo: movEstoqueMinimo !== '' ? Number(movEstoqueMinimo) : getMin(itemExistenteDoCliente),
-            minimo_critico: movMinimoCritico !== '' ? Number(movMinimoCritico) : getCrit(itemExistenteDoCliente)
+            estoque_minimo: movEstoqueMinimo !== '' ? Number(movEstoqueMinimo) : itemExistenteDoCliente.estoque_minimo,
+            minimo_critico: movMinimoCritico !== '' ? Number(movMinimoCritico) : itemExistenteDoCliente.minimo_critico
           })
           .eq('id', produtoAlvoId);
 
         if (errUpdate) {
-          mostrarAlerta(`Erro na atualização: ${errUpdate.message}`, 'erro');
+          mostrarAlerta(`Erro ao atualizar produto do cliente: ${errUpdate.message}`, 'erro');
           return;
         }
-        mensagemSucesso = `Estoque de "${nomeItem}" atualizado para o cliente!`;
+        mensagemSucesso = `Saldo do produto "${nomeItem}" atualizado para o cliente!`;
       } else {
+        // NÃO existe registro ainda para este cliente: cria um novo vínculo (cópia) mantendo o catálogo geral livre!
         const saldoInicial = movTipo === 'ENTRADA' ? qtdMovida : 0;
         const payloadNovoProdCliente = {
           descricao: nomeItem,
           nome: nomeItem,
-          codigo: prodSelecionado.codigo || gerarCodigoAuto(),
+          codigo: prodSelecionado.codigo || `UNI-${Math.floor(1000 + Math.random() * 9000)}`,
           quantidade: saldoInicial,
           cliente_id: movCliente,
           estoque_minimo: movEstoqueMinimo !== '' ? Number(movEstoqueMinimo) : 10,
@@ -312,9 +365,10 @@ export default function PainelAdmin() {
 
         produtoAlvoId = dataNovoProd.id;
         novaQuantidade = saldoInicial;
-        mensagemSucesso = `Modelo "${nomeItem}" vinculado ao cliente com sucesso!`;
+        mensagemSucesso = `Modelo "${nomeItem}" vinculado com sucesso ao cliente! O modelo continua 100% disponível no Catálogo Geral.`;
       }
     } else {
+      // ITEM JÁ PERTENCE A UM CLIENTE ESPECÍFICO
       if (movTipo === 'SAIDA') {
         if (novaQuantidade < qtdMovida) {
           mostrarAlerta(`Estoque insuficiente! Saldo atual do cliente: ${novaQuantidade} un.`, 'erro');
@@ -332,24 +386,33 @@ export default function PainelAdmin() {
       if (movEstoqueMinimo !== '') updatePayload.estoque_minimo = Number(movEstoqueMinimo);
       if (movMinimoCritico !== '') updatePayload.minimo_critico = Number(movMinimoCritico);
 
-      const { error: errProd } = await supabase.from('produtos').update(updatePayload).eq('id', prodSelecionado.id);
+      const { error: errProd } = await supabase
+        .from('produtos')
+        .update(updatePayload)
+        .eq('id', prodSelecionado.id);
+
       if (errProd) {
-        mostrarAlerta(`Erro: ${errProd.message}`, 'erro');
+        mostrarAlerta(`Erro ao atualizar dados do produto: ${errProd.message}`, 'erro');
         return;
       }
-      mensagemSucesso = `Movimentação de estoque concluída!`;
+      mensagemSucesso = `Movimentação de ${movTipo === 'ENTRADA' ? 'Entrada' : 'Saída'} efetuada com sucesso!`;
     }
 
-    await supabase.from('estoque').insert([
-      {
-        produto_id: produtoAlvoId,
-        cliente_id: clienteDestinoId,
-        tipo_movimento: movTipo,
-        quantidade: qtdMovida,
-        observacao: movObs || '',
-        created_at: new Date().toISOString()
-      }
-    ]);
+    // REGISTRO NO HISTÓRICO DE ESTOQUE
+    const payloadHist = {
+      produto_id: produtoAlvoId,
+      cliente_id: clienteDestinoId,
+      tipo_movimento: movTipo,
+      quantidade: qtdMovida,
+      observacao: movObs || (qtdMovida === 0 ? 'Vínculo de modelo ao cliente (Saldo inicial 0)' : ''),
+      created_at: new Date().toISOString()
+    };
+
+    const { error: errHist } = await supabase.from('estoque').insert([payloadHist]);
+
+    if (errHist) {
+      console.error('Erro no histórico:', errHist);
+    }
 
     mostrarAlerta(mensagemSucesso);
     setMovItem('');
@@ -358,11 +421,18 @@ export default function PainelAdmin() {
     await carregarDados();
   };
 
+  const abrirEImprimirRelatorio = () => {
+    setAbaAtiva('relatorio');
+    setTimeout(() => {
+      window.print();
+    }, 500);
+  };
+
   return (
     <div className="min-h-screen bg-slate-50 p-4 md:p-6 print:p-0 print:bg-white">
       <div className="max-w-6xl mx-auto space-y-6">
-
-        {/* CABEÇALHO */}
+        
+        {/* CABEÇALHO ADMIN */}
         <div className="bg-white rounded-xl p-5 shadow-sm border border-slate-200 flex flex-col md:flex-row justify-between items-start md:items-center gap-4 print:border-none print:shadow-none print:p-0 print:mb-4">
           <div>
             <div className="flex items-center gap-2">
@@ -371,29 +441,28 @@ export default function PainelAdmin() {
                 Painel Admin
               </span>
             </div>
-            <p className="text-xs text-slate-500 mt-1">Ação Uniformes • Gestão de Clientes, Estoque e Lançamentos</p>
+            <p className="text-xs text-slate-500 mt-1">
+              Ação Uniformes • Gestão de Clientes, Estoque e Lançamentos
+            </p>
           </div>
 
           <div className="flex items-center gap-2 print:hidden">
             <button
-              onClick={() => {
-                setAbaAtiva('relatorio');
-                setTimeout(() => window.print(), 500);
-              }}
-              className="px-3 py-1.5 bg-emerald-600 text-white text-xs font-bold rounded-lg hover:bg-emerald-700 shadow"
+              onClick={abrirEImprimirRelatorio}
+              className="px-3 py-1.5 bg-emerald-600 text-white text-xs font-bold rounded-lg hover:bg-emerald-700 transition-colors shadow flex items-center gap-1"
             >
               🖨️ Gerar PDF / Imprimir
             </button>
             <button
               onClick={carregarDados}
-              className="px-3 py-1.5 bg-blue-600 text-white text-xs font-bold rounded-lg hover:bg-blue-700 shadow"
+              className="px-3 py-1.5 bg-blue-600 text-white text-xs font-bold rounded-lg hover:bg-blue-700 transition-colors shadow flex items-center gap-1"
             >
-              🔄 Recarregar Dados
+              🔄 Recarregar
             </button>
           </div>
         </div>
 
-        {/* SELETOR DE CLIENTE */}
+        {/* SELETOR DE CLIENTE EM DESTAQUE */}
         <div className="bg-gradient-to-r from-blue-900 to-indigo-900 text-white p-5 rounded-xl shadow-md flex flex-col md:flex-row items-start md:items-center justify-between gap-4 print:bg-none print:text-black print:p-0 print:border-b print:pb-4">
           <div className="space-y-1">
             <span className="text-[10px] font-bold uppercase tracking-wider text-blue-300 print:text-slate-500">
@@ -404,13 +473,18 @@ export default function PainelAdmin() {
                 ? `🏢 Cliente: ${clienteAtualObjeto?.nome || clienteAtualObjeto?.razao_social}`
                 : '🌐 Visão Geral (Todos os Clientes)'}
             </h2>
+            <p className="text-xs text-blue-200 print:text-slate-600">
+              {clienteFiltro
+                ? 'Exibindo estatísticas, produtos, relatórios e histórico exclusivo desta empresa.'
+                : 'Selecione um cliente ao lado para isolar o estoque e emitir o relatório individual.'}
+            </p>
           </div>
 
           <div className="w-full md:w-auto min-w-[280px] print:hidden">
             <select
               value={clienteFiltro}
               onChange={(e) => setClienteFiltro(e.target.value)}
-              className="w-full p-3 rounded-lg text-xs font-bold bg-white text-slate-900 border border-blue-300 focus:outline-none"
+              className="w-full p-3 rounded-lg text-xs font-bold bg-white text-slate-900 shadow-inner border border-blue-300 focus:ring-2 focus:ring-blue-400 focus:outline-none"
             >
               <option value="">-- Todos os Clientes (Visão Geral Admin) --</option>
               {clientes.map((c) => (
@@ -428,48 +502,74 @@ export default function PainelAdmin() {
           </div>
         )}
 
-        {/* MÉTRICAS EM CARDS */}
+        {/* MÉTRICAS GERAIS OU DO CLIENTE */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 print:grid-cols-4">
-          <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
+          <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 print:border-slate-300">
             <p className="text-xs font-bold text-slate-400 uppercase">
               {clienteFiltro ? 'Peças do Cliente' : 'Total Geral de Peças'}
             </p>
             <p className="text-2xl font-black text-slate-800 mt-1">{totalPecas}</p>
           </div>
 
-          <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
-            <p className="text-xs font-bold text-slate-400 uppercase">Clientes Cadastrados</p>
-            <p className="text-2xl font-black text-blue-600 mt-1">{clientes.length}</p>
+          <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 print:border-slate-300">
+            <p className="text-xs font-bold text-slate-400 uppercase">
+              {clienteFiltro ? 'Itens Cadastrados' : 'Clientes Cadastrados'}
+            </p>
+            <p className="text-2xl font-black text-blue-600 mt-1">
+              {clienteFiltro ? baseProdutosParaMetrica.length : clientes.length}
+            </p>
           </div>
 
-          <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
+          <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 print:border-slate-300">
             <p className="text-xs font-bold text-amber-600 uppercase">Estoque Baixo</p>
             <p className="text-2xl font-black text-amber-600 mt-1">{produtosBaixo.length} itens</p>
           </div>
 
-          <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
+          <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 print:border-slate-300">
             <p className="text-xs font-bold text-red-600 uppercase">Nível Crítico</p>
             <p className="text-2xl font-black text-red-600 mt-1">{produtosCritico.length} itens</p>
           </div>
         </div>
 
-        {/* BANNER DE ALERTAS POR CLIENTE */}
-        {clientesComAlerta.length > 0 && (
-          <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 flex flex-wrap items-center gap-2 text-xs font-bold text-amber-800 print:hidden">
-            <span>⚠️ CLIENTES COM ALERTA DE REPOSIÇÃO ({clientesComAlerta.length}):</span>
-            {clientesComAlerta.map((item) => (
-              <span
-                key={item.cliente.id}
-                onClick={() => setClienteFiltro(String(item.cliente.id))}
-                className="bg-amber-200 text-amber-900 px-2 py-1 rounded cursor-pointer hover:bg-amber-300 transition-colors"
-              >
-                {item.cliente.nome || item.cliente.razao_social} ({item.itemBaixo || item.qtdBaixo} item baixo)
-              </span>
-            ))}
-          </div>
+        {/* ALERTA GLOBAL DE CLIENTES */}
+        {!clienteFiltro && (
+          clientesEmAlerta.length > 0 ? (
+            <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 shadow-sm print:hidden">
+              <div className="flex items-center gap-2 text-amber-800 font-bold text-xs uppercase mb-2">
+                <span>⚠️</span>
+                <span>Clientes com Alerta de Reposição ({clientesEmAlerta.length}):</span>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {clientesEmAlerta.map((c) => {
+                  const prodsDoCliente = produtos.filter((p) => p.cliente_id === c.id);
+                  const qtdAlertas = prodsDoCliente.filter(
+                    (p) => (Number(p.quantidade) || 0) <= (Number(p.estoque_minimo) || 10)
+                  ).length;
+
+                  return (
+                    <button
+                      key={c.id}
+                      onClick={() => setClienteFiltro(c.id)}
+                      className="bg-white border border-amber-300 hover:border-amber-500 px-3 py-1.5 rounded-lg text-xs font-bold text-amber-900 shadow-sm flex items-center gap-2 transition-all cursor-pointer"
+                    >
+                      <span>🏢 {c.nome || c.razao_social}</span>
+                      <span className="bg-amber-100 text-amber-800 px-2 py-0.5 rounded-full text-[10px]">
+                        {qtdAlertas} {qtdAlertas === 1 ? 'item baixo' : 'itens baixos'}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          ) : (
+            <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3 text-emerald-800 text-xs font-bold flex items-center gap-2 print:hidden">
+              <span>✅</span>
+              <span>Todos os clientes estão com níveis de estoque regulares.</span>
+            </div>
+          )
         )}
 
-        {/* NAVEGAÇÃO ENTRE ABAS */}
+        {/* NAVEGAÇÃO DE ABAS */}
         <div className="bg-white p-1.5 rounded-xl shadow-sm border border-slate-200 flex flex-wrap gap-2 print:hidden">
           <button
             onClick={() => setAbaAtiva('movimentacao')}
@@ -531,7 +631,7 @@ export default function PainelAdmin() {
           </div>
         )}
 
-        {/* ABA 1: LANÇAR MOVIMENTAÇÃO */}
+        {/* ABA 1: MOVIMENTAÇÃO E ATRIBUIÇÃO AO CLIENTE */}
         {abaAtiva === 'movimentacao' && (
           <div className="space-y-6">
             <form onSubmit={handleConfirmarMovimentacao} className="bg-white rounded-xl shadow-sm p-6 border border-slate-200 print:hidden">
@@ -550,20 +650,30 @@ export default function PainelAdmin() {
                     className="w-full p-2.5 border rounded-lg text-xs bg-white font-medium text-slate-800"
                     required
                   >
-                    <option value="">-- Selecione o Item --</option>
-                    {produtos.map((p) => {
-                      const cli = clientes.find((c) => String(c.id) === String(p.cliente_id));
-                      const nomeItem = getNome(p);
-                      const codigoStr = p.codigo ? ` (${p.codigo})` : '';
-                      const clienteStr = cli ? ` — [${cli.nome || cli.razao_social}]` : ' — [Catálogo Geral]';
-                      const saldoStr = ` (Saldo: ${getQtd(p)} un)`;
+                    <option value="">-- Escolha um Item --</option>
+                    
+                    {produtosGerais.length > 0 && (
+                      <optgroup label="🌐 Catálogo Geral (Sempre disponível para atribuição)">
+                        {produtosGerais.map((p) => (
+                          <option key={p.id} value={p.id}>
+                            {p.descricao || p.nome} {p.codigo ? `(${p.codigo})` : ''}
+                          </option>
+                        ))}
+                      </optgroup>
+                    )}
 
-                      return (
-                        <option key={p.id} value={p.id}>
-                          {nomeItem}{codigoStr}{clienteStr}{saldoStr}
-                        </option>
-                      );
-                    })}
+                    {produtosDeClientes.length > 0 && (
+                      <optgroup label="🏢 Uniformes Já Atribuídos a Clientes">
+                        {produtosDeClientes.map((p) => {
+                          const cli = clientes.find((c) => c.id === p.cliente_id);
+                          return (
+                            <option key={p.id} value={p.id}>
+                              {p.descricao || p.nome} — [{cli?.nome || 'Cliente'}] (Saldo: {p.quantidade ?? 0} un)
+                            </option>
+                          );
+                        })}
+                      </optgroup>
+                    )}
                   </select>
                 </div>
 
@@ -577,10 +687,10 @@ export default function PainelAdmin() {
                     className="w-full p-2.5 border rounded-lg text-xs bg-white font-medium text-slate-800"
                     required
                   >
-                    <option value="">-- Selecione o Cliente --</option>
-                    {clientes.map((c) => (
-                      <option key={c.id} value={c.id}>
-                        🏢 {c.nome || c.razao_social}
+                    <option value="">-- Selecione o Cliente Destino --</option>
+                    {clientes.map((c, idx) => (
+                      <option key={c.id || idx} value={c.id || idx}>
+                        🏢 {c.nome || c.razao_social || 'Cliente'}
                       </option>
                     ))}
                   </select>
@@ -594,7 +704,7 @@ export default function PainelAdmin() {
                     className="w-full p-2.5 border rounded-lg text-xs font-bold"
                   >
                     <option value="ENTRADA">🟢 Entrada (Abastecer / Atribuir Lote)</option>
-                    <option value="SAIDA">🔴 Saída (Retirada)</option>
+                    <option value="SAIDA">🔴 Saída (Retirada / Entrega)</option>
                   </select>
                 </div>
               </div>
@@ -602,7 +712,7 @@ export default function PainelAdmin() {
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
                 <div>
                   <label className="block text-xs font-bold text-slate-600 mb-1">
-                    Quantidade de Peças * <span className="text-[10px] text-slate-400 font-normal">(Aceita 0 para apenas vincular)</span>
+                    Quantidade de Peças * <span className="font-normal text-slate-400">(Aceita 0 para vincular)</span>
                   </label>
                   <input
                     type="number"
@@ -613,26 +723,30 @@ export default function PainelAdmin() {
                     required
                   />
                 </div>
+
                 <div>
-                  <label className="block text-xs font-bold text-slate-600 mb-1">
+                  <label className="block text-xs font-bold text-amber-700 mb-1">
                     Estoque Mínimo para este Cliente (Alerta Amarelo)
                   </label>
                   <input
                     type="number"
                     value={movEstoqueMinimo}
                     onChange={(e) => setMovEstoqueMinimo(e.target.value)}
-                    className="w-full p-2.5 border rounded-lg text-xs font-bold border-amber-300"
+                    placeholder="Ex: 10"
+                    className="w-full p-2.5 border border-amber-300 rounded-lg text-xs bg-amber-50/50"
                   />
                 </div>
+
                 <div>
-                  <label className="block text-xs font-bold text-slate-600 mb-1">
+                  <label className="block text-xs font-bold text-red-700 mb-1">
                     Mínimo Crítico para este Cliente (Alerta Vermelho)
                   </label>
                   <input
                     type="number"
                     value={movMinimoCritico}
                     onChange={(e) => setMovMinimoCritico(e.target.value)}
-                    className="w-full p-2.5 border rounded-lg text-xs font-bold border-red-300"
+                    placeholder="Ex: 3"
+                    className="w-full p-2.5 border border-red-300 rounded-lg text-xs bg-red-50/50"
                   />
                 </div>
               </div>
@@ -648,7 +762,7 @@ export default function PainelAdmin() {
                 />
               </div>
 
-              <button type="submit" className="bg-blue-600 text-white font-bold px-6 py-2.5 rounded-lg text-xs hover:bg-blue-700 shadow">
+              <button type="submit" className="bg-blue-600 text-white font-bold px-6 py-2.5 rounded-lg text-xs hover:bg-blue-700 transition-colors shadow">
                 Confirmar Atribuição / Movimentação
               </button>
             </form>
@@ -657,7 +771,7 @@ export default function PainelAdmin() {
             <div className="bg-white rounded-xl shadow-sm p-6 border border-slate-200">
               <div className="flex justify-between items-center mb-4">
                 <h3 className="text-base font-bold text-slate-800">
-                  Posição de Estoque {clienteFiltro ? `— ${clienteAtualObjeto?.nome || clienteAtualObjeto?.razao_social}` : 'Geral'}
+                  Posição de Estoque {clienteFiltro ? `— ${clienteAtualObjeto?.nome}` : 'Geral'}
                 </h3>
                 {clienteFiltro && (
                   <button
@@ -685,15 +799,15 @@ export default function PainelAdmin() {
                     {baseProdutosParaMetrica.length === 0 ? (
                       <tr>
                         <td colSpan={6} className="p-4 text-center text-slate-400 font-medium">
-                          Nenhum produto cadastrado ou encontrado.
+                          Nenhum produto cadastrado para este cliente.
                         </td>
                       </tr>
                     ) : (
                       baseProdutosParaMetrica.map((item, idx) => {
-                        const qtd = getQtd(item);
-                        const min = getMin(item);
-                        const crit = getCrit(item);
-                        const clienteRel = clientes.find((c) => String(c.id) === String(item.cliente_id));
+                        const qtd = Number(item.quantidade) || 0;
+                        const min = Number(item.estoque_minimo) || 10;
+                        const crit = Number(item.minimo_critico) || 3;
+                        const clienteRel = clientes.find((c) => c.id === item.cliente_id);
 
                         let statusBadge = (
                           <span className="bg-emerald-100 text-emerald-800 text-[10px] font-bold px-2 py-0.5 rounded">
@@ -718,9 +832,9 @@ export default function PainelAdmin() {
                         return (
                           <tr key={item.id || idx}>
                             <td className="p-3 font-mono font-bold text-blue-600">{item.codigo || '—'}</td>
-                            <td className="p-3 font-bold text-slate-800">{getNome(item)}</td>
+                            <td className="p-3 font-bold text-slate-800">{item.descricao || item.nome || '—'}</td>
                             <td className="p-3 font-medium text-slate-600">
-                              {clienteRel ? (clienteRel.nome || clienteRel.razao_social) : '🌐 Catálogo Geral'}
+                              {clienteRel ? clienteRel.nome : '🌐 Catálogo Geral'}
                             </td>
                             <td className="p-3 text-slate-500 font-medium">
                               Mín: {min} / Crítico: {crit}
@@ -793,13 +907,14 @@ export default function PainelAdmin() {
             </div>
 
             <div className="bg-white rounded-xl shadow-sm p-6 border border-slate-200 print:shadow-none print:border-none">
+              
               <div className="flex justify-between items-start border-b pb-4 mb-6">
                 <div>
                   <h2 className="text-xl font-black text-slate-900 uppercase">
-                    Consumos e Posição do Estoque
+                    Consumos e Posição do Estoque — Agosto de 2026
                   </h2>
                   <p className="text-xs text-slate-500 mt-0.5">
-                    Cliente: <strong className="text-slate-800">{clienteFiltro ? (clienteAtualObjeto?.nome || clienteAtualObjeto?.razao_social) : 'Todas as Empresas (Consolidado)'}</strong>
+                    Cliente: <strong className="text-slate-800">{clienteFiltro ? clienteAtualObjeto?.nome : 'Todas as Empresas (Consolidado)'}</strong>
                     {clienteAtualObjeto?.cnpj && ` • CNPJ: ${clienteAtualObjeto.cnpj}`}
                   </p>
                   <p className="text-xs text-slate-400 mt-0.5">
@@ -958,9 +1073,9 @@ export default function PainelAdmin() {
                     </thead>
                     <tbody className="text-xs font-medium">
                       {produtosFiltrados.map((p, idx) => {
-                        const qtd = getQtd(p);
-                        const min = getMin(p);
-                        const crit = getCrit(p);
+                        const qtd = Number(p.quantidade) || 0;
+                        const min = Number(p.estoque_minimo) || 10;
+                        const crit = Number(p.minimo_critico) || 3;
                         const reposicaoSugerida = Math.max(0, min * 2 - qtd);
 
                         let statusText = 'OK';
@@ -977,7 +1092,7 @@ export default function PainelAdmin() {
                         return (
                           <tr key={p.id || idx} className="border-b">
                             <td className="p-2 border font-mono font-bold text-blue-600">{p.codigo || '—'}</td>
-                            <td className="p-2 border font-bold text-slate-800">{getNome(p)}</td>
+                            <td className="p-2 border font-bold text-slate-800">{p.descricao || p.nome}</td>
                             <td className="p-2 border font-bold">{qtd} un</td>
                             <td className="p-2 border text-slate-500">{min} un</td>
                             <td className="p-2 border">
@@ -1011,11 +1126,11 @@ export default function PainelAdmin() {
           </div>
         )}
 
-        {/* ABA 3: HISTÓRICO DE MOVIMENTAÇÕES */}
+        {/* ABA 3: HISTÓRICO */}
         {abaAtiva === 'historico' && (
           <div className="bg-white rounded-xl shadow-sm p-6 border border-slate-200">
             <h3 className="text-base font-bold text-slate-800 mb-4">
-              Extrato de Movimentações {clienteFiltro ? `— ${clienteAtualObjeto?.nome || clienteAtualObjeto?.razao_social}` : 'Geral'}
+              Extrato de Movimentações {clienteFiltro ? `— ${clienteAtualObjeto?.nome}` : 'Geral'}
             </h3>
             <div className="overflow-x-auto">
               <table className="w-full text-left border-collapse">
@@ -1031,9 +1146,12 @@ export default function PainelAdmin() {
                 </thead>
                 <tbody className="divide-y divide-slate-100 text-xs">
                   {historicoFiltrado.map((h, idx) => {
-                    const prodRel = produtos.find((p) => String(p.id) === String(h.produto_id));
-                    const cliRel = clientes.find((c) => String(c.id) === String(h.cliente_id));
-                    const dataFmt = h.created_at ? new Date(h.created_at).toLocaleString('pt-BR') : '—';
+                    const prodRel = produtos.find((p) => p.id === h.produto_id);
+                    const cliRel = clientes.find((c) => c.id === h.cliente_id);
+                    const dataFmt = h.created_at
+                      ? new Date(h.created_at).toLocaleString('pt-BR')
+                      : '—';
+
                     const isEntrada = h.tipo_movimento === 'ENTRADA';
 
                     return (
@@ -1051,9 +1169,11 @@ export default function PainelAdmin() {
                           )}
                         </td>
                         <td className="p-3 font-bold text-slate-800">
-                          {prodRel ? getNome(prodRel) : 'Produto'}
+                          {prodRel ? prodRel.descricao || prodRel.nome : 'Produto'}
                         </td>
-                        <td className="p-3 text-slate-600">{cliRel ? (cliRel.nome || cliRel.razao_social) : '—'}</td>
+                        <td className="p-3 text-slate-600">
+                          {cliRel ? cliRel.nome : '—'}
+                        </td>
                         <td className="p-3 font-bold text-slate-800">
                           {isEntrada ? `+${h.quantidade}` : `-${h.quantidade}`} un
                         </td>
@@ -1196,9 +1316,9 @@ export default function PainelAdmin() {
                   className="w-full p-2.5 border rounded-lg text-xs bg-white"
                 >
                   <option value="">-- Selecione o Cliente --</option>
-                  {clientes.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.nome || c.razao_social}
+                  {clientes.map((c, idx) => (
+                    <option key={c.id || idx} value={c.id || idx}>
+                      {c.nome}
                     </option>
                   ))}
                 </select>
