@@ -78,7 +78,7 @@ export default function PainelAdmin() {
       if (errC) console.error('Erro Clientes:', errC);
       if (dClientes) setClientes(dClientes);
 
-      const { data: dProdutos, error: errP } = await supabase.from('produtos').select('*');
+      const { data: dProdutos, error: errP } = await supabase.from('produtos_catalogo').select('*').order('nome', { ascending: true });
       if (errP) {
         console.error('Erro Produtos:', errP);
         setErroSupabase(`Erro ao buscar produtos: ${errP.message}`);
