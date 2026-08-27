@@ -96,37 +96,42 @@ export function ModalAtribuirProduto({ clientes, produtosCatalogo, onSuccess, on
           </div>
 
           <div className="grid grid-cols-3 gap-2">
-            <div>
-              <label className="block text-xs font-medium mb-1">Qtd. Inicial</label>
-              <input 
-                type="number" 
-                value={quantidadeInicial} 
-                onChange={(e) => setQuantidadeInicial(Number(e.target.value))}
-                className="w-full border rounded p-2" 
-                min="0"
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-medium mb-1">Estoque Mín.</label>
-              <input 
-                type="number" 
-                value={estoqueMinimo} 
-                onChange={(e) => setEstoqueMinimo(Number(e.target.value))}
-                className="w-full border rounded p-2" 
-                min="1"
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-medium mb-1">Estoque Crít.</label>
-              <input 
-                type="number" 
-                value={estoqueCritico} 
-                onChange={(e) => setEstoqueCritico(Number(e.target.value))}
-                className="w-full border rounded p-2" 
-                min="0"
-              />
-            </div>
-          </div>
+  <div>
+    <label className="block text-xs font-medium mb-1">Qtd. Inicial</label>
+    <input
+      type="number"
+      value={quantidadeInicial === 0 ? '' : quantidadeInicial}
+      onChange={(e) => setQuantidadeInicial(e.target.value === '' ? 0 : Number(e.target.value))}
+      className="w-full border rounded p-2"
+      placeholder="0"
+      min="0"
+    />
+  </div>
+
+  <div>
+    <label className="block text-xs font-medium mb-1">Estoque Min.</label>
+    <input
+      type="number"
+      value={estoqueMinimo === 0 ? '' : estoqueMinimo}
+      onChange={(e) => setEstoqueMinimo(e.target.value === '' ? 0 : Number(e.target.value))}
+      className="w-full border rounded p-2"
+      placeholder="0"
+      min="0"
+    />
+  </div>
+
+  <div>
+    <label className="block text-xs font-medium mb-1">Estoque Crit.</label>
+    <input
+      type="number"
+      value={estoqueCritico === 0 ? '' : estoqueCritico}
+      onChange={(e) => setEstoqueCritico(e.target.value === '' ? 0 : Number(e.target.value))}
+      className="w-full border rounded p-2"
+      placeholder="0"
+      min="0"
+    />
+  </div>
+</div>
 
           <div className="flex justify-end space-x-2 pt-4">
             <button 
