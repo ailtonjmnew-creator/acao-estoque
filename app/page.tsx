@@ -146,7 +146,7 @@ export default function PainelAdmin() {
 
   const clienteAtualObjeto = clientes.find((c) => c.id === clienteFiltro);
 
-  // CÁLCULOS DAS MÉTRICAS (ESTOQUE BAIXO INCLUI CRÍTICO)
+  // CÁLCULOS DAS MÉTRICAS
   const baseProdutosParaMetrica = clienteFiltro
     ? produtos.filter((p) => p.cliente_id === clienteFiltro)
     : produtos;
@@ -174,7 +174,7 @@ export default function PainelAdmin() {
     .filter((h) => h.tipo_movimento === 'SAIDA')
     .reduce((acc, h) => acc + (Number(h.quantidade) || 0), 0);
 
-  // CÁLCULO TOP 5 MAIS SOLICITADOS (RANKING)
+  // CÁLCULO TOP 5 MAIS SOLICITADOS
   const consumoPorProduto: { [key: string]: { nome: string; qtd: number } } = {};
   historicoFiltrado
     .filter((h) => h.tipo_movimento === 'SAIDA')
@@ -204,9 +204,11 @@ export default function PainelAdmin() {
   );
   const clientesEmAlerta = clientes.filter((c) => clienteIdsComAlerta.includes(c.id));
 
-  // DIVISÃO DE PRODUTOS PARA O DROPDOWN (CATÁLOGO GERAL VS PRODUTOS DE CLIENTE)
+  // DIVISÃO DE PRODUTOS PARA O DROPDOWN: CATÁLOGO GERAL FICA SEMPRE DISPONÍVEL
   const produtosGerais = produtos.filter((p) => !p.cliente_id);
-  const produtosDeClientes = produtos.filter((p) => p.cliente_id);
+  const produtosDeClientes = clienteFiltro
+    ? produtos.filter((p) => p.cliente_id === clienteFiltro)
+    : produtos.filter((p) => p.cliente_id);
 
   // HANDLERS
   const handleCadastrarUniforme = async (e: React.FormEvent) => {
@@ -230,7 +232,7 @@ export default function PainelAdmin() {
     if (error) {
       mostrarAlerta(`Erro ao cadastrar uniforme: ${error.message}`, 'erro');
     } else {
-      mostrarAlerta(`Uniforme "${novoUniforme.descricao}" cadastrado no Catálogo Geral com sucesso!`);
+      mostrarAlerta(`Uniforme "${novoUniforme.descricao}" adicionado ao Catálogo Geral!`);
       setNovoUniforme({ descricao: '', codigo: '', quantidade: 0 });
       await carregarDados();
       setAbaAtiva('movimentacao');
@@ -273,7 +275,7 @@ export default function PainelAdmin() {
     }
   };
 
-  // MOVIMENTAÇÃO INTELIGENTE (ATRIBUIÇÃO, CLONAGEM E SALDO ZERO)
+  // MOVIMENTAÇÃO E ATRIBUIÇÃO MULTI-CLIENTE
   const handleConfirmarMovimentacao = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!movItem) {
@@ -307,15 +309,18 @@ export default function PainelAdmin() {
 
     // SE O ITEM VEM DO CATÁLOGO GERAL (SEM CLIENTE_ID) E FOI ESCOLHIDO UM CLIENTE:
     if (!prodSelecionado.cliente_id && movCliente) {
-      // Verificar se este cliente já tem uma cópia cadastrada deste item
+      const nomeItem = prodSelecionado.descricao || prodSelecionado.nome;
+
+      // Verifica se o cliente JÁ possui uma instância deste modelo cadastrada
       const itemExistenteDoCliente = produtos.find(
         (p) =>
           p.cliente_id === movCliente &&
-          (p.codigo === prodSelecionado.codigo || p.descricao === prodSelecionado.descricao)
+          (p.codigo === prodSelecionado.codigo ||
+            (p.descricao || p.nome || '').trim().toLowerCase() === nomeItem.trim().toLowerCase())
       );
 
       if (itemExistenteDoCliente) {
-        // Já existe registro para o cliente: atualiza o produto do cliente
+        // Já existe o item vinculado ao cliente: atualiza o saldo
         produtoAlvoId = itemExistenteDoCliente.id;
         const saldoAtual = Number(itemExistenteDoCliente.quantidade) || 0;
         novaQuantidade = movTipo === 'SAIDA' ? Math.max(0, saldoAtual - qtdMovida) : saldoAtual + qtdMovida;
@@ -333,13 +338,13 @@ export default function PainelAdmin() {
           mostrarAlerta(`Erro ao atualizar produto do cliente: ${errUpdate.message}`, 'erro');
           return;
         }
-        mensagemSucesso = `Saldo do produto "${prodSelecionado.descricao}" atualizado para o cliente!`;
+        mensagemSucesso = `Saldo do produto "${nomeItem}" atualizado para o cliente!`;
       } else {
-        // NÃO existe registro: Cria uma CÓPIA exclusiva para o cliente mantendo o modelo no Catálogo Geral!
+        // NÃO existe registro ainda para este cliente: cria um novo vínculo (cópia) mantendo o catálogo geral livre!
         const saldoInicial = movTipo === 'ENTRADA' ? qtdMovida : 0;
         const payloadNovoProdCliente = {
-          descricao: prodSelecionado.descricao || prodSelecionado.nome,
-          nome: prodSelecionado.nome || prodSelecionado.descricao,
+          descricao: nomeItem,
+          nome: nomeItem,
           codigo: prodSelecionado.codigo || `UNI-${Math.floor(1000 + Math.random() * 9000)}`,
           quantidade: saldoInicial,
           cliente_id: movCliente,
@@ -360,10 +365,10 @@ export default function PainelAdmin() {
 
         produtoAlvoId = dataNovoProd.id;
         novaQuantidade = saldoInicial;
-        mensagemSucesso = `Modelo "${prodSelecionado.descricao}" vinculado com sucesso ao cliente! O modelo geral continua disponível no catálogo.`;
+        mensagemSucesso = `Modelo "${nomeItem}" vinculado com sucesso ao cliente! O modelo continua 100% disponível no Catálogo Geral.`;
       }
     } else {
-      // PRODUTO JÁ PERTENCE A UM CLIENTE ESPECÍFICO
+      // ITEM JÁ PERTENCE A UM CLIENTE ESPECÍFICO
       if (movTipo === 'SAIDA') {
         if (novaQuantidade < qtdMovida) {
           mostrarAlerta(`Estoque insuficiente! Saldo atual do cliente: ${novaQuantidade} un.`, 'erro');
@@ -399,7 +404,7 @@ export default function PainelAdmin() {
       cliente_id: clienteDestinoId,
       tipo_movimento: movTipo,
       quantidade: qtdMovida,
-      observacao: movObs || (qtdMovida === 0 ? 'Vínculo de item ao cliente (Saldo 0)' : ''),
+      observacao: movObs || (qtdMovida === 0 ? 'Vínculo de modelo ao cliente (Saldo inicial 0)' : ''),
       created_at: new Date().toISOString()
     };
 
@@ -645,10 +650,10 @@ export default function PainelAdmin() {
                     className="w-full p-2.5 border rounded-lg text-xs bg-white font-medium text-slate-800"
                     required
                   >
-                    <option value="">-- Escolha um Item do Catálogo --</option>
+                    <option value="">-- Escolha um Item --</option>
                     
                     {produtosGerais.length > 0 && (
-                      <optgroup label="🌐 Catálogo Geral (Disponível para Vincular)">
+                      <optgroup label="🌐 Catálogo Geral (Sempre disponível para atribuição)">
                         {produtosGerais.map((p) => (
                           <option key={p.id} value={p.id}>
                             {p.descricao || p.nome} {p.codigo ? `(${p.codigo})` : ''}
@@ -658,7 +663,7 @@ export default function PainelAdmin() {
                     )}
 
                     {produtosDeClientes.length > 0 && (
-                      <optgroup label="🏢 Produtos Já Vinculados a Clientes">
+                      <optgroup label="🏢 Uniformes Já Atribuídos a Clientes">
                         {produtosDeClientes.map((p) => {
                           const cli = clientes.find((c) => c.id === p.cliente_id);
                           return (
@@ -707,7 +712,7 @@ export default function PainelAdmin() {
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
                 <div>
                   <label className="block text-xs font-bold text-slate-600 mb-1">
-                    Quantidade de Peças * <span className="font-normal text-slate-400">(Aceita 0 para apenas vincular)</span>
+                    Quantidade de Peças * <span className="font-normal text-slate-400">(Aceita 0 para vincular)</span>
                   </label>
                   <input
                     type="number"
