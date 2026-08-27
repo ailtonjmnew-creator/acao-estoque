@@ -146,7 +146,7 @@ export default function PainelAdmin() {
 
   const clienteAtualObjeto = clientes.find((c) => c.id === clienteFiltro);
 
-  // CÁLCULOS DAS MÉTRICAS (AJUSTADO: SE ESTÁ CRÍTICO, TAMBÉM É CONTADO COMO BAIXO)
+  // CÁLCULOS DAS MÉTRICAS (ESTOQUE BAIXO INCLUI CRÍTICO)
   const baseProdutosParaMetrica = clienteFiltro
     ? produtos.filter((p) => p.cliente_id === clienteFiltro)
     : produtos;
@@ -157,7 +157,6 @@ export default function PainelAdmin() {
     (p) => (Number(p.quantidade) || 0) <= (Number(p.minimo_critico) || 3)
   );
 
-  // Inclusivo: Se está abaixo do crítico, também está abaixo do estoque mínimo
   const produtosBaixo = baseProdutosParaMetrica.filter(
     (p) => (Number(p.quantidade) || 0) <= (Number(p.estoque_minimo) || 10)
   );
@@ -165,10 +164,6 @@ export default function PainelAdmin() {
   const produtosOk = baseProdutosParaMetrica.filter(
     (p) => (Number(p.quantidade) || 0) > (Number(p.estoque_minimo) || 10)
   );
-
-  const percentSaudavel = baseProdutosParaMetrica.length
-    ? Math.round((produtosOk.length / baseProdutosParaMetrica.length) * 100)
-    : 100;
 
   // MOVIMENTAÇÕES ACUMULADAS
   const totalEntradas = historicoFiltrado
@@ -208,6 +203,10 @@ export default function PainelAdmin() {
     )
   );
   const clientesEmAlerta = clientes.filter((c) => clienteIdsComAlerta.includes(c.id));
+
+  // DIVISÃO DE PRODUTOS PARA O DROPDOWN (CATÁLOGO GERAL VS PRODUTOS DE CLIENTE)
+  const produtosGerais = produtos.filter((p) => !p.cliente_id);
+  const produtosDeClientes = produtos.filter((p) => p.cliente_id);
 
   // HANDLERS
   const handleCadastrarUniforme = async (e: React.FormEvent) => {
@@ -274,6 +273,7 @@ export default function PainelAdmin() {
     }
   };
 
+  // MOVIMENTAÇÃO INTELIGENTE (ATRIBUIÇÃO, CLONAGEM E SALDO ZERO)
   const handleConfirmarMovimentacao = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!movItem) {
@@ -282,64 +282,138 @@ export default function PainelAdmin() {
     }
 
     const prodSelecionado = produtos.find((p) => p.id === movItem || p.codigo === movItem);
-    const qtdMovida = Number(movQtd) || 0;
-
     if (!prodSelecionado) {
       mostrarAlerta('Produto não encontrado no banco.', 'erro');
       return;
     }
 
-    let novaQuantidade = Number(prodSelecionado.quantidade) || 0;
-    if (movTipo === 'SAIDA') {
-      if (novaQuantidade < qtdMovida) {
-        mostrarAlerta(`Estoque insuficiente! Saldo atual: ${novaQuantidade} un.`, 'erro');
-        return;
-      }
-      novaQuantidade -= qtdMovida;
-    } else {
-      novaQuantidade += qtdMovida;
+    const qtdMovida = Number(movQtd) || 0;
+
+    if (movTipo === 'SAIDA' && qtdMovida <= 0) {
+      mostrarAlerta('Para registrar uma Saída, a quantidade deve ser maior que zero.', 'erro');
+      return;
     }
 
-    const clienteAtribuido = movCliente || prodSelecionado.cliente_id || null;
+    const clienteDestinoId = movCliente || prodSelecionado.cliente_id;
 
+    if (!clienteDestinoId) {
+      mostrarAlerta('Selecione um cliente para atribuir ou movimentar este item.', 'erro');
+      return;
+    }
+
+    let produtoAlvoId = prodSelecionado.id;
+    let novaQuantidade = Number(prodSelecionado.quantidade) || 0;
+    let mensagemSucesso = '';
+
+    // SE O ITEM VEM DO CATÁLOGO GERAL (SEM CLIENTE_ID) E FOI ESCOLHIDO UM CLIENTE:
+    if (!prodSelecionado.cliente_id && movCliente) {
+      // Verificar se este cliente já tem uma cópia cadastrada deste item
+      const itemExistenteDoCliente = produtos.find(
+        (p) =>
+          p.cliente_id === movCliente &&
+          (p.codigo === prodSelecionado.codigo || p.descricao === prodSelecionado.descricao)
+      );
+
+      if (itemExistenteDoCliente) {
+        // Já existe registro para o cliente: atualiza o produto do cliente
+        produtoAlvoId = itemExistenteDoCliente.id;
+        const saldoAtual = Number(itemExistenteDoCliente.quantidade) || 0;
+        novaQuantidade = movTipo === 'SAIDA' ? Math.max(0, saldoAtual - qtdMovida) : saldoAtual + qtdMovida;
+
+        const { error: errUpdate } = await supabase
+          .from('produtos')
+          .update({
+            quantidade: novaQuantidade,
+            estoque_minimo: movEstoqueMinimo !== '' ? Number(movEstoqueMinimo) : itemExistenteDoCliente.estoque_minimo,
+            minimo_critico: movMinimoCritico !== '' ? Number(movMinimoCritico) : itemExistenteDoCliente.minimo_critico
+          })
+          .eq('id', produtoAlvoId);
+
+        if (errUpdate) {
+          mostrarAlerta(`Erro ao atualizar produto do cliente: ${errUpdate.message}`, 'erro');
+          return;
+        }
+        mensagemSucesso = `Saldo do produto "${prodSelecionado.descricao}" atualizado para o cliente!`;
+      } else {
+        // NÃO existe registro: Cria uma CÓPIA exclusiva para o cliente mantendo o modelo no Catálogo Geral!
+        const saldoInicial = movTipo === 'ENTRADA' ? qtdMovida : 0;
+        const payloadNovoProdCliente = {
+          descricao: prodSelecionado.descricao || prodSelecionado.nome,
+          nome: prodSelecionado.nome || prodSelecionado.descricao,
+          codigo: prodSelecionado.codigo || `UNI-${Math.floor(1000 + Math.random() * 9000)}`,
+          quantidade: saldoInicial,
+          cliente_id: movCliente,
+          estoque_minimo: movEstoqueMinimo !== '' ? Number(movEstoqueMinimo) : 10,
+          minimo_critico: movMinimoCritico !== '' ? Number(movMinimoCritico) : 3
+        };
+
+        const { data: dataNovoProd, error: errInsertProd } = await supabase
+          .from('produtos')
+          .insert([payloadNovoProdCliente])
+          .select('*')
+          .single();
+
+        if (errInsertProd) {
+          mostrarAlerta(`Erro ao vincular item ao cliente: ${errInsertProd.message}`, 'erro');
+          return;
+        }
+
+        produtoAlvoId = dataNovoProd.id;
+        novaQuantidade = saldoInicial;
+        mensagemSucesso = `Modelo "${prodSelecionado.descricao}" vinculado com sucesso ao cliente! O modelo geral continua disponível no catálogo.`;
+      }
+    } else {
+      // PRODUTO JÁ PERTENCE A UM CLIENTE ESPECÍFICO
+      if (movTipo === 'SAIDA') {
+        if (novaQuantidade < qtdMovida) {
+          mostrarAlerta(`Estoque insuficiente! Saldo atual do cliente: ${novaQuantidade} un.`, 'erro');
+          return;
+        }
+        novaQuantidade -= qtdMovida;
+      } else {
+        novaQuantidade += qtdMovida;
+      }
+
+      const updatePayload: any = {
+        quantidade: novaQuantidade,
+        cliente_id: clienteDestinoId
+      };
+      if (movEstoqueMinimo !== '') updatePayload.estoque_minimo = Number(movEstoqueMinimo);
+      if (movMinimoCritico !== '') updatePayload.minimo_critico = Number(movMinimoCritico);
+
+      const { error: errProd } = await supabase
+        .from('produtos')
+        .update(updatePayload)
+        .eq('id', prodSelecionado.id);
+
+      if (errProd) {
+        mostrarAlerta(`Erro ao atualizar dados do produto: ${errProd.message}`, 'erro');
+        return;
+      }
+      mensagemSucesso = `Movimentação de ${movTipo === 'ENTRADA' ? 'Entrada' : 'Saída'} efetuada com sucesso!`;
+    }
+
+    // REGISTRO NO HISTÓRICO DE ESTOQUE
     const payloadHist = {
-      produto_id: prodSelecionado.id || movItem,
-      cliente_id: clienteAtribuido,
+      produto_id: produtoAlvoId,
+      cliente_id: clienteDestinoId,
       tipo_movimento: movTipo,
       quantidade: qtdMovida,
-      observacao: movObs,
+      observacao: movObs || (qtdMovida === 0 ? 'Vínculo de item ao cliente (Saldo 0)' : ''),
       created_at: new Date().toISOString()
     };
 
     const { error: errHist } = await supabase.from('estoque').insert([payloadHist]);
 
     if (errHist) {
-      mostrarAlerta(`Erro ao registrar histórico: ${errHist.message}`, 'erro');
-      return;
+      console.error('Erro no histórico:', errHist);
     }
 
-    const updatePayload: any = {
-      quantidade: novaQuantidade,
-      cliente_id: clienteAtribuido
-    };
-
-    if (movEstoqueMinimo !== '') updatePayload.estoque_minimo = Number(movEstoqueMinimo);
-    if (movMinimoCritico !== '') updatePayload.minimo_critico = Number(movMinimoCritico);
-
-    const { error: errProd } = await supabase
-      .from('produtos')
-      .update(updatePayload)
-      .eq('id', prodSelecionado.id);
-
-    if (errProd) {
-      mostrarAlerta(`Erro ao atualizar dados do produto: ${errProd.message}`, 'erro');
-    } else {
-      mostrarAlerta(`Movimentação efetuada com sucesso! Produto atribuído e atualizado.`);
-      setMovItem('');
-      setMovQtd(1);
-      setMovObs('');
-      await carregarDados();
-    }
+    mostrarAlerta(mensagemSucesso);
+    setMovItem('');
+    setMovQtd(1);
+    setMovObs('');
+    await carregarDados();
   };
 
   const abrirEImprimirRelatorio = () => {
@@ -423,7 +497,7 @@ export default function PainelAdmin() {
           </div>
         )}
 
-        {/* MÉTRICAS GERAIS OU DO CLIENTE (AJUSTADO: ESTOQUE BAIXO INCLUI CRÍTICO) */}
+        {/* MÉTRICAS GERAIS OU DO CLIENTE */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 print:grid-cols-4">
           <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 print:border-slate-300">
             <p className="text-xs font-bold text-slate-400 uppercase">
@@ -563,7 +637,7 @@ export default function PainelAdmin() {
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
                 <div>
                   <label className="block text-xs font-bold text-slate-600 mb-1">
-                    Selecione o Item do Catálogo Geral * ({produtos.length} disponíveis)
+                    Selecione o Item do Catálogo Geral ou de Cliente *
                   </label>
                   <select
                     value={movItem}
@@ -571,28 +645,36 @@ export default function PainelAdmin() {
                     className="w-full p-2.5 border rounded-lg text-xs bg-white font-medium text-slate-800"
                     required
                   >
-                    <option value="">
-                      {produtos.length === 0
-                        ? '-- Nenhum produto no catálogo --'
-                        : `-- Escolha um Item (${produtos.length} disponíveis) --`}
-                    </option>
-                    {produtos.map((p, idx) => {
-                      const idVal = p.id || p.codigo || idx;
-                      const nomeExibicao = p.descricao || p.nome || `Produto #${idx + 1}`;
-                      const codExibicao = p.codigo ? `(${p.codigo})` : '';
-                      const saldo = p.quantidade ?? 0;
-                      return (
-                        <option key={idVal} value={idVal}>
-                          {nomeExibicao} {codExibicao} — Saldo: {saldo} un
-                        </option>
-                      );
-                    })}
+                    <option value="">-- Escolha um Item do Catálogo --</option>
+                    
+                    {produtosGerais.length > 0 && (
+                      <optgroup label="🌐 Catálogo Geral (Disponível para Vincular)">
+                        {produtosGerais.map((p) => (
+                          <option key={p.id} value={p.id}>
+                            {p.descricao || p.nome} {p.codigo ? `(${p.codigo})` : ''}
+                          </option>
+                        ))}
+                      </optgroup>
+                    )}
+
+                    {produtosDeClientes.length > 0 && (
+                      <optgroup label="🏢 Produtos Já Vinculados a Clientes">
+                        {produtosDeClientes.map((p) => {
+                          const cli = clientes.find((c) => c.id === p.cliente_id);
+                          return (
+                            <option key={p.id} value={p.id}>
+                              {p.descricao || p.nome} — [{cli?.nome || 'Cliente'}] (Saldo: {p.quantidade ?? 0} un)
+                            </option>
+                          );
+                        })}
+                      </optgroup>
+                    )}
                   </select>
                 </div>
 
                 <div>
                   <label className="block text-xs font-bold text-slate-600 mb-1">
-                    Atribuir ao Cliente *
+                    Atribuir / Movimentar para o Cliente *
                   </label>
                   <select
                     value={movCliente}
@@ -624,7 +706,9 @@ export default function PainelAdmin() {
 
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
                 <div>
-                  <label className="block text-xs font-bold text-slate-600 mb-1">Quantidade de Peças *</label>
+                  <label className="block text-xs font-bold text-slate-600 mb-1">
+                    Quantidade de Peças * <span className="font-normal text-slate-400">(Aceita 0 para apenas vincular)</span>
+                  </label>
                   <input
                     type="number"
                     min="0"
@@ -663,12 +747,12 @@ export default function PainelAdmin() {
               </div>
 
               <div className="mb-4">
-                <label className="block text-xs font-bold text-slate-600 mb-1">Observação / Solicitação / Colaborador</label>
+                <label className="block text-xs font-bold text-slate-600 mb-1">Observação / Solicitante / Observação Lote</label>
                 <input
                   type="text"
                   value={movObs}
                   onChange={(e) => setMovObs(e.target.value)}
-                  placeholder="Ex: Entrega de lote inicial / Solicitante: Pedro - Operação"
+                  placeholder="Ex: Lote inicial atribuído / Pedido do gestor Pedro"
                   className="w-full p-2.5 border rounded-lg text-xs"
                 />
               </div>
@@ -745,7 +829,7 @@ export default function PainelAdmin() {
                             <td className="p-3 font-mono font-bold text-blue-600">{item.codigo || '—'}</td>
                             <td className="p-3 font-bold text-slate-800">{item.descricao || item.nome || '—'}</td>
                             <td className="p-3 font-medium text-slate-600">
-                              {clienteRel ? clienteRel.nome : '— (Sem vínculo)'}
+                              {clienteRel ? clienteRel.nome : '🌐 Catálogo Geral'}
                             </td>
                             <td className="p-3 text-slate-500 font-medium">
                               Mín: {min} / Crítico: {crit}
@@ -763,11 +847,9 @@ export default function PainelAdmin() {
           </div>
         )}
 
-        {/* ABA 2: RELATÓRIO & DASHBOARD (COMPLETO E PROFISSIONAL) */}
+        {/* ABA 2: RELATÓRIO & DASHBOARD */}
         {abaAtiva === 'relatorio' && (
           <div className="space-y-6">
-            
-            {/* PAINEL DE SLICERS E FILTROS DO DASHBOARD */}
             <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 flex flex-wrap items-center justify-between gap-4 print:hidden">
               <div className="flex flex-wrap items-center gap-3">
                 <div>
@@ -814,14 +896,13 @@ export default function PainelAdmin() {
                   }}
                   className="text-xs font-bold text-red-600 hover:underline"
                 >
-                  Clear Filters (Limpar)
+                  Limpar Filtros
                 </button>
               )}
             </div>
 
             <div className="bg-white rounded-xl shadow-sm p-6 border border-slate-200 print:shadow-none print:border-none">
               
-              {/* CABEÇALHO DO RELATÓRIO */}
               <div className="flex justify-between items-start border-b pb-4 mb-6">
                 <div>
                   <h2 className="text-xl font-black text-slate-900 uppercase">
@@ -844,7 +925,6 @@ export default function PainelAdmin() {
                 </button>
               </div>
 
-              {/* CARDS DE INDICADORES (KPI CARDS) */}
               <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
                 <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
                   <span className="text-[10px] font-bold text-slate-400 uppercase">Total Movimentado</span>
@@ -870,13 +950,10 @@ export default function PainelAdmin() {
                   </div>
                 </div>
 
-                {/* SINALIZANDO NOS DOIS CAMPOS SE TIVER CRÍTICO */}
                 <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
                   <span className="text-[10px] font-bold text-red-600 uppercase">Ação Urgente Necessária</span>
                   <div className="mt-2">
-                    <span className="text-3xl font-black text-red-600">
-                      {produtosBaixo.length}
-                    </span>
+                    <span className="text-3xl font-black text-red-600">{produtosBaixo.length}</span>
                     <span className="text-xs font-bold text-slate-500 ml-2">
                       ({produtosCritico.length} {produtosCritico.length === 1 ? 'crítico' : 'críticos'} / {produtosBaixo.length} {produtosBaixo.length === 1 ? 'baixo' : 'baixos'})
                     </span>
@@ -884,10 +961,7 @@ export default function PainelAdmin() {
                 </div>
               </div>
 
-              {/* GRÁFICOS VISUAIS E RANKING */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
-                
-                {/* GRÁFICO 1: RANKING TOP 5 ITENS MAIS SOLICITADOS */}
                 <div className="bg-slate-50 p-5 rounded-xl border border-slate-200">
                   <h3 className="text-xs font-bold text-slate-700 uppercase tracking-wider mb-4 flex items-center justify-between">
                     <span>🏆 Top 5 Itens Mais Solicitados</span>
@@ -921,7 +995,6 @@ export default function PainelAdmin() {
                   )}
                 </div>
 
-                {/* GRÁFICO 2: BALANÇO VISUAL DO ESTOQUE */}
                 <div className="bg-slate-50 p-5 rounded-xl border border-slate-200 flex flex-col justify-between">
                   <div>
                     <h3 className="text-xs font-bold text-slate-700 uppercase tracking-wider mb-4">
@@ -974,10 +1047,8 @@ export default function PainelAdmin() {
                     * Nota: Itens classificados como críticos são automaticamente contemplados no alerta de estoque baixo.
                   </p>
                 </div>
-
               </div>
 
-              {/* TABELA DE SUGESTÃO DE REPOSIÇÃO */}
               <div className="mb-6">
                 <h3 className="text-sm font-bold text-slate-800 uppercase mb-3">
                   📋 Sugestão de Reposição Personalizada
@@ -1035,7 +1106,6 @@ export default function PainelAdmin() {
                 </div>
               </div>
 
-              {/* CAMPOS DE ASSINATURA */}
               <div className="mt-12 pt-6 border-t grid grid-cols-2 gap-8 text-center print:block">
                 <div>
                   <div className="border-b border-slate-400 w-48 mx-auto mb-1"></div>
@@ -1112,7 +1182,7 @@ export default function PainelAdmin() {
           </div>
         )}
 
-        {/* ABA 4: CADASTRAR UNIFORME (CATÁLOGO GERAL) */}
+        {/* ABA 4: CADASTRAR UNIFORME */}
         {abaAtiva === 'uniforme' && (
           <form onSubmit={handleCadastrarUniforme} className="bg-white rounded-xl shadow-sm p-6 border border-slate-200">
             <h3 className="text-base font-bold text-slate-800 mb-1">Cadastrar Novo Uniforme / Produto</h3>
