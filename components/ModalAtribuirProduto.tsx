@@ -23,17 +23,17 @@ export function ModalAtribuirProduto({ clientes, produtosCatalogo, onSuccess, on
     setLoading(true);
     try {
       // 1. Criar o vínculo no estoque do cliente
-      const { data: produtoCliente, error: errVinculo } = await supabase
-        .from('produtos_cliente')
-        .insert([{
-          cliente_id: clienteId,
-          produto_catalogo_id: produtoCatalogoId,
-          quantidade_atual: quantidadeInicial,
-          estoque_minimo: estoqueMinimo,
-          estoque_critico: estoqueCritico
-        }])
-        .select()
-        .single();
+ const { data: produtoCliente, error: errVinculo } = await supabase
+      .from('produtos_cliente')
+      .upsert([{
+        cliente_id: clienteId,
+        produto_catalogo_id: produtoCatalogoId,
+        quantidade_atual: quantidadeInicial,
+        estoque_minimo: estoqueMinimo,
+        estoque_critico: estoqueCritico
+      }], { onConflict: 'cliente_id,produto_catalogo_id' })
+      .select()
+      .single();
 
       if (errVinculo) throw errVinculo;
 
